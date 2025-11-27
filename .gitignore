@@ -5,3 +5,4 @@ src/metrics/vesuvius-metric-resources/**
 src/vesuvius-metric-resources/**
 src/topological-metrics-kaggle/**
 **.zip
+notebooks/temp_raw_downloads/**
