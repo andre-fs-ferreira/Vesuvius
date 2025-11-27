@@ -1,2 +1,7 @@
 **DataSet
 src/metrics/**
+src/metrics/topological-metrics-kaggle/**
+src/metrics/vesuvius-metric-resources/**
+src/vesuvius-metric-resources/**
+src/topological-metrics-kaggle/**
+**.zip
