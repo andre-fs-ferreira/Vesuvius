@@ -30,16 +30,41 @@ def get_tif_links(url):
     except Exception as e:
         print(f"Error fetching links: {e}")
         return []
-def download_file(file_url, local_path):
-    """Downloads a single file if it doesn't exist."""
-    if os.path.exists(local_path):
-        return
+import os
+import time
+import requests
+
+def download_file(file_url, local_path, max_retries=10, timeout=30):
+    """Downloads a single file with retries and backoff, skipping if it already exists."""
     
-    with requests.get(file_url, stream=True) as r:
-        r.raise_for_status()
-        with open(local_path, 'wb') as f:
-            for chunk in r.iter_content(chunk_size=8192):
-                f.write(chunk)
+    # Skip if file already exists and is non-empty
+    if os.path.exists(local_path) and os.path.getsize(local_path) > 0:
+        return
+
+    for attempt in range(max_retries):
+        try:
+            with requests.get(file_url, stream=True, timeout=timeout) as r:
+                r.raise_for_status()
+                
+                # Create parent folder if needed
+                os.makedirs(os.path.dirname(local_path), exist_ok=True)
+                
+                with open(local_path, 'wb') as f:
+                    for chunk in r.iter_content(chunk_size=8192):
+                        if chunk:  # skip keep-alive chunks
+                            f.write(chunk)
+
+            # Success → return
+            return
+
+        except Exception as e:
+            wait = 2 ** attempt
+            print(f"[Retry {attempt+1}/{max_retries}] Error downloading {file_url}: {e}")
+            print(f"Waiting {wait}s before retry...")
+            time.sleep(wait)
+
+    raise RuntimeError(f"Failed to download after {max_retries} retries: {file_url}")
+
 
 import tifffile
 import numpy as np
@@ -161,13 +186,13 @@ for chunk_idx, tif_files in enumerate(chunk_list):
         download_file(url, path)
   
     # Calculate bounds
-    bounds = calculate_global_bounds(tif_files)
-    print(f"Current bounds at slice {idx_z}: {bounds}")
+    #bounds = calculate_global_bounds(tif_files)
+    #print(f"Current bounds at slice {idx_z}: {bounds}")
     
-    for idx_z, f in enumerate(tqdm(tif_files, desc="Croping and Saving")):
+    #for idx_z, f in enumerate(tqdm(tif_files, desc="Croping and Saving")):
         # crop edges without content, save and remove tmp file
-        path = os.path.join(DOWNLOAD_DIR, f)
-        cropped_numpy = crop_foreground(tiff_path=path, bounds=bounds)
-        output_path = os.path.join(OUTPUT_DIR_chunk, f)
-        tifffile.imwrite(output_path, cropped_numpy, compression='deflate')
-        os.remove(path)
+        #path = os.path.join(DOWNLOAD_DIR, f)
+        #cropped_numpy = crop_foreground(tiff_path=path, bounds=bounds)
+        #output_path = os.path.join(OUTPUT_DIR_chunk, f)
+        #tifffile.imwrite(output_path, cropped_numpy, compression='deflate')
+        #os.remove(path)
