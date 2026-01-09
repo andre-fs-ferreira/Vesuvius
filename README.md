@@ -1,12 +1,26 @@
 # Experiemnts for the Vesuvius Challenge
 
-
-
-# Training ideas
-1. Prepare a clean dataset with only 0 and 1 labels.
-## Baseline
-1. Train the nnUNet on the clean dataset.
+# TODO:
 
 ## Pre-training
-1. Train in an unsupervised matter with all data, without labels.
-2. Fine-tune only on the regions with label 0 and 1.
+[] Pre-training on the 5 full resolution scrolls
+    [x] Training (up to 1000 epohcs)
+    [] DONE
+
+## Fine-tuning
+[] Fine tune:
+    [] Fine-tune only on the regions with label 0 and 1.
+        [] Loss functions to try:
+            [] DSC (baseline)
+            [] BE + DSC
+            [] Tversky α = 0.7 $\beta=0.3$
+            [] 0.5*Focal + Tversky α = 0.7 $\beta=0.3$
+            [] border loss (to implement!)
+
+## Baselines
+[] Train the baseline without pre-training
+    [] Build the training cycle
+
+[] Train the nnUNet on the clean dataset
+
+
