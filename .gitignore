@@ -9,3 +9,5 @@ notebooks/temp_raw_downloads/**
 checkpoints/**
 trash/**
 __pycache__/**
+utils/__pycache__/**
+utils/cldice/__pycache__/**
