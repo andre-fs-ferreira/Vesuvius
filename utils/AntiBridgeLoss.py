@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn.functional import sigmoid, binary_cross_entropy_with_logits
 import numpy as np
 from scipy.ndimage import gaussian_filter, binary_dilation, generate_binary_structure
 from skimage.measure import label
@@ -65,7 +66,7 @@ class AntiBridgeLoss(nn.Module):
         bridge_weight_map: (Optional) Pre-calculated map. 
         """
         # Activation (Logits -> Probabilities)
-        pred_prob = torch.sigmoid(pred)
+        #pred_prob = torch.sigmoid(pred)
 
         # Handle Weight Map Generation (CPU <-> GPU Bridge)
         if bridge_weight_map is None:
@@ -90,7 +91,7 @@ class AntiBridgeLoss(nn.Module):
 
         # Compute Weighted Loss
         # reduction='none' is crucial to keep the shape for masking
-        pixel_loss = F.binary_cross_entropy(pred_prob, gt, reduction='none')
+        pixel_loss = binary_cross_entropy_with_logits(pred, gt, reduction='none')
         
         # Apply Anti-Bridge Weights
         weighted_loss = pixel_loss * bridge_weight_map
