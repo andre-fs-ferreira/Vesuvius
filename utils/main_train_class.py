@@ -20,6 +20,7 @@ from torch.amp import autocast, GradScaler
 
 # MONAI Specific Imports
 import monai
+from monai.transforms.transform import MapTransform, Transform
 from monai.data import CacheDataset
 from monai.metrics import DiceMetric
 from monai.losses import DiceLoss, TverskyLoss, FocalLoss
@@ -31,17 +32,61 @@ from monai.transforms import (
     ResizeWithPadOrCropd, 
     RandCoarseDropoutd,
     EnsureTyped,
-    EnsureChannelFirstd
+    EnsureChannelFirstd,
+    Resized,
+    RandSpatialCropSamplesd,
+    RandCropByPosNegLabeld
 )
 
 # Local Project Imports
 from abs_training import BaseTrainer
 from stunet_model import STUNetSegmentation # We want to seg now -> Last layer is has 2 output channels instead of one # STUNetReconstruction
 
-sys.path.append(os.path.abspath("/mounts/disk4_tiago_e_andre/vesuvius/Vesuvius/utils"))
+sys.path.append(os.path.abspath("../utils"))
 
 from cldice.cldice import soft_cldice
 from AntiBridgeLoss import AntiBridgeLoss
+
+class GetROIMaskdd(MapTransform):
+    """
+    Create a ROI mask from the ground truth by setting to 0 the regions with ignore_mask_value.
+    The ROI mask will have 1 where the ground truth is not equal to ignore_mask_value, and 0 elsewhere.
+    """
+
+    def __init__(self, keys, ignore_mask_value=2, new_key_names=None):
+        self.keys = keys
+        self.ignore_mask_value = ignore_mask_value
+        self.new_key_names = new_key_names
+
+    def __call__(self, data):
+        for key, new_key in zip(self.keys, self.new_key_names):
+            gt = data[key]
+            roi_mask = (gt != self.ignore_mask_value).float()
+            data[new_key] = roi_mask
+        return data
+
+class GetBinaryLabeld(MapTransform):
+    def __init__(self, keys, ignore_mask_value=2):
+        super().__init__(keys)
+        self.ignore_mask_value = ignore_mask_value
+
+    def __call__(self, data):
+        d = dict(data)
+        for key in self.key_iterator(d):
+            val = d[key]
+            # 1. Use a small epsilon for the ignore value check (safety)
+            # This handles values like 1.999 or 2.0000153
+            mask = (val > (self.ignore_mask_value - 0.1)) & (val < (self.ignore_mask_value + 0.1))
+            val[mask] = 0
+            
+            # 2. FORCE the remaining values into strictly 0 or 1
+            # Anything that isn't background (0) should be 1
+            # This fixes the 1.0000153 issue
+            val[val > 0.5] = 1.0
+            val[val <= 0.5] = 0.0
+            
+            d[key] = val
+        return d
 
 class main_train_STU_Net(BaseTrainer):
     def __init__(self, config):
@@ -188,12 +233,12 @@ class main_train_STU_Net(BaseTrainer):
                 use_softmax=False,
                 reduction="none"
             ),
-            'CLDICE': soft_cldice(
+            'CLDICE': soft_cldice( # not use in Deep Supervision
                 iter_=10, 
                 smooth=1e-5, 
                 exclude_background=False
             ),
-            'AntiBridge': AntiBridgeLoss(
+            'AntiBridge': AntiBridgeLoss( # not use in Deep Supervision
                 sigma=1.0, # Don't used if the edge map exists
                 w0=10.0 # Don't used if the edge map exists
             )
@@ -217,33 +262,51 @@ class main_train_STU_Net(BaseTrainer):
 
 
         # Return a function that computes weighted sum of losses
-        def combined_loss(pred, target, roi_mask, bridge_weight_map):
+        def combined_loss(pred, target, roi_mask, bridge_weight_map, deep_supervision_weights=[0.25,0.5,1]):
+            """
+            Compute loss as weighted sum of multiple criterions
+            
+            :param pred: List of outputs from the model (segmentation in 3 for deep supervision)
+            :param target: Ground truth segmentation (3 as well for deep supervison)
+            :param roi_mask: Mask of the region of interest where the loss will be computed (same shape as pred and target)
+            :param bridge_weight_map: Weight map to penalize bridges (same shape as pred and target)
+            :return: total_loss, losses_dict
+            """
             total_loss = 0.0
             losses_dict = {}
 
+            # iterate over each metric to compute
             for crit in loss_dict.keys():
                 loss_fn, w = loss_dict[crit]
-
-                if crit=='DSC' or crit=='Tversky' or crit=='CLDICE':
-                    # apply activation befofre masking to ensure 0 in the region to ignore
-                    pred_masked = sigmoid(pred)*roi_mask
-                    target_masked = target*roi_mask
-                    loss_here = loss_fn(pred_masked, target_masked)
-
+                loss_here = 0.0
+                if crit=='DSC' or crit=='Tversky':
+                    # Make sure each deep supervision output is handled
+                    for sub_pred, sub_target, sub_roi_mask, sub_dsw in zip(pred, target, roi_mask, deep_supervision_weights):
+                        # apply activation befofre masking to ensure 0 in the region to ignore
+                        pred_masked = sigmoid(sub_pred)*sub_roi_mask
+                        target_masked = sub_target*sub_roi_mask
+                        loss_here += loss_fn(pred_masked, target_masked)*sub_dsw
+                # In here, the functions use sigmoid internally
                 elif crit=='BCE' or crit=='Focal':
-                    # in here, the functions use sigmoid internally
-                    if crit=='BCE':
-                        loss_raw = loss_fn(pred, target, reduction='none')
-                    else:
-                        loss_raw = loss_fn(pred, target)
-                    loss_masked = loss_raw * roi_mask
-                    loss_here = loss_masked.sum() / (roi_mask.sum() + 1e-8)
+                    for sub_pred, sub_target, sub_roi_mask, sub_dsw in zip(pred, target, roi_mask, deep_supervision_weights):
+                        if crit=='BCE':
+                            loss_raw = loss_fn(sub_pred, sub_target, reduction='none')
+                        else:
+                            loss_raw = loss_fn(sub_pred, sub_target)
+                        loss_masked = loss_raw * sub_roi_mask
+                        loss_here += (loss_masked.sum() / (sub_roi_mask.sum() + 1e-8))*sub_dsw
 
+                # NO DEEP SUPERVISON FOR THESE LOSSES
+                elif crit=='CLDICE':
+                    # apply activation befofre masking to ensure 0 in the region to ignore
+                    pred_masked = sigmoid(pred[-1]) * roi_mask[-1]
+                    target_masked = target[-1] * roi_mask[-1]
+                    loss_here = loss_fn(pred_masked, target_masked)
                 elif crit=='AntiBridge':
-                    loss_here = loss_fn(pred, target, roi_mask, bridge_weight_map)
+                    loss_here = loss_fn(pred[-1], target[-1], roi_mask[-1], bridge_weight_map)
 
                 total_loss += w * loss_here
-                losses_dict[crit] = loss_here
+                losses_dict[crit] = loss_here.item()
             return total_loss, losses_dict
         
         return combined_loss 
@@ -251,11 +314,19 @@ class main_train_STU_Net(BaseTrainer):
     def _set_val_metric(self):
         """Define the loss function."""
         val_metric = DiceMetric(
-            include_background=True
+            include_background=True,
+            get_not_nans=True
         )
         def compute_masked_val(pred, target, roi_mask):
             pred_masked = sigmoid(pred) * roi_mask
             pred_masked = (pred_masked > 0.5).float()
+            # check if empty
+            if torch.sum(pred_masked) == 0:
+                # If both pred and target are empty in the ROI, return Dice of 1.0
+                if torch.sum(target * roi_mask) == 0:
+                    return torch.tensor(1.0, device=target.device, dtype=torch.float32)
+                else:
+                    return torch.tensor(0.0, device=target.device, dtype=torch.float32)
             target_masked = target * roi_mask
             return val_metric(pred_masked, target_masked)
         return compute_masked_val
@@ -268,7 +339,6 @@ class main_train_STU_Net(BaseTrainer):
     
     def _set_train_dataloader(self):
         """ Getting the list of cases for training and loading using MONAI (all into memory)"""
-        # TODO
         data_list = []
         with open(self.config['data_split_json'], "r") as f:
             split = json.load(f)
@@ -289,10 +359,28 @@ class main_train_STU_Net(BaseTrainer):
                 # Load image 
                 LoadImaged(keys=["image", 'gt']),
                 EnsureChannelFirstd(keys=["image", 'gt']),
+
                 # Normalize uint8 input
                 ScaleIntensityRanged(keys=["image"], a_min=0, a_max=255, b_min=0, b_max=1, clip=True),
-                ResizeWithPadOrCropd(keys=["image", "gt"], spatial_size=self.config['patch_size']),
-                EnsureTyped(keys=["image", "gt"], track_meta=False)
+
+                # Create a ROI mask for cropping 
+                GetROIMaskdd(keys=["gt"], ignore_mask_value=2, new_key_names=["roi_mask"]),
+
+                # Cropping random patches
+                #ResizeWithPadOrCropd(keys=["image", "gt"], spatial_size=self.config['patch_size']),
+                # Not ResizeWithPadOrCropd -> random crop
+                #RandSpatialCropSamplesd(keys=["image", 'gt'], roi_size=self.config['patch_size'], num_samples=1, random_size=False),
+                RandCropByPosNegLabeld(keys=["image", 'gt', 'roi_mask'], label_key='roi_mask', spatial_size=self.config['patch_size'], pos=1, neg=0, num_samples=1, image_key=None),
+                ResizeWithPadOrCropd(keys=["image", 'gt'], spatial_size=self.config['patch_size'], mode="minimum"),
+
+                # Create multi-resolution ground truths for deep supervision
+                CopyItemsd(keys=["gt"], times=2, names=["gt_2layer", "gt_3layer"]),
+                Resized(keys=["gt_2layer"], spatial_size=[s // 2 for s in self.config['patch_size']], mode='nearest'),
+                Resized(keys=["gt_3layer"], spatial_size=[s // 4 for s in self.config['patch_size']], mode='nearest'),
+                #roi_mask = ground_truth != 2 -> roi_mask = roi_mask.float()
+                GetROIMaskdd(keys=["gt_2layer", "gt_3layer"], ignore_mask_value=2, new_key_names=["roi_mask_2layer", "roi_mask_3layer"]),
+                GetBinaryLabeld(keys=["gt", "gt_2layer", "gt_3layer"], ignore_mask_value=2),
+                EnsureTyped(keys=["image", "gt",  "gt_2layer", "gt_3layer", "roi_mask", "roi_mask_2layer", "roi_mask_3layer"], track_meta=False)
             ]
         )
 
@@ -310,7 +398,6 @@ class main_train_STU_Net(BaseTrainer):
         return train_loader
 
     def _set_val_dataloader(self):
-        # TODO
         data_list = []
         with open(self.config['data_split_json'], "r") as f:
             split = json.load(f)
@@ -333,8 +420,13 @@ class main_train_STU_Net(BaseTrainer):
                 EnsureChannelFirstd(keys=["image", 'gt']),
                 # Normalize uint8 input
                 ScaleIntensityRanged(keys=["image"], a_min=0, a_max=255, b_min=0, b_max=1, clip=True),
-                ResizeWithPadOrCropd(keys=["image", "gt"], spatial_size=self.config['patch_size']),
-                EnsureTyped(keys=["image", "gt"], track_meta=False)
+                # Create a ROI mask for cropping 
+                GetROIMaskdd(keys=["gt"], ignore_mask_value=2, new_key_names=["roi_mask"]),
+                # Get random patches
+                RandCropByPosNegLabeld(keys=["image", 'gt', 'roi_mask'], label_key='roi_mask', spatial_size=self.config['patch_size'], pos=1, neg=0, num_samples=1, image_key=None),
+                ResizeWithPadOrCropd(keys=["image", "gt", "roi_mask"], spatial_size=self.config['patch_size']),
+                GetBinaryLabeld(keys=["gt"], ignore_mask_value=2),
+                EnsureTyped(keys=["image", "gt", "roi_mask"], track_meta=False)
             ]
         )
 
@@ -386,7 +478,6 @@ class main_train_STU_Net(BaseTrainer):
         nib.save(nii, path)
         
     def saving_logic(self, best_val_loss, val_avg_loss, epoch):
-        # TODO
         if best_val_loss > val_avg_loss: 
             best_val_loss = val_avg_loss
             save_path = join(self.model_save_path, f"model_best.pth")
@@ -409,7 +500,7 @@ class main_train_STU_Net(BaseTrainer):
                 }, save_path)
             print(f"Saved checkpoint: {save_path}")
         return best_val_loss
-   
+    
     def train_epoch(self, **kwargs):
         """Logic for a single training epoch. Returns average loss."""
         epoch = kwargs.get('epoch')
@@ -426,27 +517,37 @@ class main_train_STU_Net(BaseTrainer):
         for idx, batch_dict in enumerate(pbar):
             # Load input vol and gt
             input_patch = batch_dict['image'].to(self.config['device'])
-            ground_truth = batch_dict['gt'].to(self.config['device'])
-            # Create the mask of the region to compute the loss
-            roi_mask = ground_truth != 2
-            roi_mask = roi_mask.float().to(self.config['device'])
+            ground_truth = [
+                batch_dict['gt_3layer'].to(self.config['device']),
+                batch_dict['gt_2layer'].to(self.config['device']),
+                batch_dict['gt'].to(self.config['device'])
+            ]
+            # Mask of the region to compute the loss
+            roi_mask = [
+                batch_dict['roi_mask_3layer'].to(self.config['device']),
+                batch_dict['roi_mask_2layer'].to(self.config['device']),
+                batch_dict['roi_mask'].to(self.config['device'])
+            ]
 
+            bridge_weight_map = None # TODO could be added later if needed bridge_weight_map = batch_dict['bridge_weight_map'].to(self.config['device'])
+            
             optimizer.zero_grad()
             # --- FP16 FORWARD PASS ---
             with autocast(device_type=self.config['device']):
                 # Forward Pass
                 # The model tries to predict the segmentation
-                prediction = self.model(input_patch) # TODO the prediction has the deep supervision! 5 outputs
+                prediction = self.model(input_patch) # the prediction has the deep supervision! 3 outputs
 
-                # Calculate Loss (Compare Prediction vs. Clean)
-                train_loss, losses_dict = self.train_criterion(prediction, ground_truth, roi_mask=roi_mask) # TODO make sure train_criterion takes care
+                # Calculate Loss (Compare Prediction vs. GT)
+                # prediction, target and roi_mask should be a list of 3 tensors
+                train_loss, losses_dict = self.train_criterion(prediction, ground_truth, roi_mask=roi_mask, bridge_weight_map=bridge_weight_map) 
 
-                # commented to avoid overwhelming TODO
-                losses_dict["train_loss"] = train_loss.item()
-                losses_dict["train_step"] = epoch*len(self.train_loader)+idx
-                self.wandb_run.log(
-                        losses_dict
-                )
+                # commented to avoid overwhelming 
+                #losses_dict["train_loss"] = train_loss.item()
+                #losses_dict["train_step"] = epoch*len(self.train_loader)+idx
+                #self.wandb_run.log(
+                #        losses_dict
+                #)
                 
             # Backward
             self.scaler.scale(train_loss).backward()
@@ -463,9 +564,9 @@ class main_train_STU_Net(BaseTrainer):
             pre_name = "warmup_"
         else:
             pre_name = ""
-        self.save_vol(prediction, join(self.preds_path, f"{pre_name}epoch_{epoch}_pred_train.nii.gz"))
+        self.save_vol(prediction[-1], join(self.preds_path, f"{pre_name}epoch_{epoch}_pred_train.nii.gz"))
         self.save_vol(input_patch, join(self.preds_path, f"{pre_name}epoch_{epoch}_input_train.nii.gz"))
-        self.save_vol(ground_truth, join(self.preds_path, f"{pre_name}epoch_{epoch}_gt_train.nii.gz"))
+        self.save_vol(ground_truth[-1], join(self.preds_path, f"{pre_name}epoch_{epoch}_gt_train.nii.gz"))
 
         train_avg_loss = epoch_loss / len(self.train_loader)
         print(f"{pre_name} Epoch {epoch} Finished. Avg Loss: {train_avg_loss:.6f}")
@@ -484,12 +585,11 @@ class main_train_STU_Net(BaseTrainer):
 
         pbar = tqdm(self.val_loader, desc=f"Val epoch {epoch}/{self.config['num_epochs']}")
 
-        for batch_dict in pbar:
+        for idx, batch_dict in enumerate(pbar):
             input_patch = batch_dict['image'].to(self.config['device'])
             ground_truth = batch_dict['gt'].to(self.config['device'])
             # Create the mask of the region to compute the loss
-            roi_mask = ground_truth != 2
-            roi_mask = roi_mask.float().to(self.config['device'])
+            roi_mask = batch_dict['roi_mask'].to(self.config['device'])
 
             # --- FP16 FORWARD PASS ---
             with torch.no_grad():
@@ -499,11 +599,11 @@ class main_train_STU_Net(BaseTrainer):
                 # Calculate Loss (Compare Prediction vs. GT)
                 val_loss = self.val_metric(pred=prediction, target=ground_truth, roi_mask=roi_mask)
                 
-                # commented to avoid overwhelming # TODO remove
-                self.wandb_run.log({"val_loss": val_loss.item()})
+                # commented to avoid overwhelming 
+                #self.wandb_run.log({"val_loss": val_loss.item()})
 
             val_loss_sum += val_loss.item()
-            pbar.set_postfix({"Loss": val_loss.item()})
+            pbar.set_postfix({"DSC": val_loss.item()})
 
         # Save a prediction
         if warmup:
@@ -514,7 +614,7 @@ class main_train_STU_Net(BaseTrainer):
         self.save_vol(input_patch, join(self.preds_path, f"{pre_name}epoch_{epoch}_input_val.nii.gz"))
         self.save_vol(ground_truth, join(self.preds_path, f"{pre_name}epoch_{epoch}_gt_val.nii.gz"))
         val_avg_loss = val_loss_sum / len(self.val_loader)
-        print(f"Epoch {self.epoch} with validation avg Loss: {val_avg_loss:.6f}")
+        print(f"Epoch {epoch} with validation avg Loss: {val_avg_loss:.6f}")
         return val_avg_loss
 
     def _freeze_weights(self, **kwargs):
@@ -546,11 +646,14 @@ class main_train_STU_Net(BaseTrainer):
         """ Perform warmup by freezen all loaded weights and training only the new weights """
         pre_train_config = self.config['pre_train_config']
 
+        with open(pre_train_config, "r") as f:
+            pre_train_config = json.load(f)
+
         # Prepare self.model by doing smart freezing
         self._freeze_weights()
 
         # Take old learning rate (used for pre-training)
-        warm_up_opt = optim.AdamW(self.model.parameters(), lr=self.config['learning_rate'])
+        warm_up_opt = optim.AdamW(self.model.parameters(), lr=pre_train_config['learning_rate'])
         
         warmup_epoch = 0
         for warmup_epoch in range(self.config['warmup_epochs']):
@@ -607,10 +710,10 @@ class main_train_STU_Net(BaseTrainer):
 
             # Save in wandb
             log_train_data = {
-                    "epoch": self.epoch,
+                    "epoch_train": self.epoch,
                     "train_avg_loss": train_avg_loss,
                     "val_avg_loss": val_avg_loss,
-                    "lr": self.optimizer.param_groups[0]['lr'] 
+                    "lr_train": self.optimizer.param_groups[0]['lr'] 
                 }
             for criterio_name in per_criterio_loss.keys():
                 log_train_data[criterio_name] = per_criterio_loss[criterio_name]
