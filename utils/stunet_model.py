@@ -140,8 +140,10 @@ class STUNetSegmentation(nn.Module):
 
         # --- OUTPUT ---
         self.seg_outputs = nn.ModuleList([
-            nn.Conv3d(1024, 1, kernel_size=1, stride=1), 
-            nn.Conv3d(512, 1, kernel_size=1, stride=1), 
+            #nn.Conv3d(1024, 1, kernel_size=1, stride=1), 
+            #nn.Conv3d(512, 1, kernel_size=1, stride=1), 
+            None, # ignoring the deepest two outputs for memory efficiency
+            None, # not using these outputs for deep supervision
             nn.Conv3d(256, 1, kernel_size=1, stride=1), 
             nn.Conv3d(128, 1, kernel_size=1, stride=1),
             nn.Conv3d(64, 1, kernel_size=1, stride=1) 
@@ -162,12 +164,13 @@ class STUNetSegmentation(nn.Module):
                 x = torch.nn.functional.interpolate(x, size=skip.shape[2:], mode='nearest')
             x = torch.cat((x, skip), dim=1)
             x = self.conv_blocks_localization[i](x)
-            deep_supervision_preds.append(self.seg_outputs[i](x))
+            if i>=2:  # Start collecting predictions from the 3rd decoder block
+                deep_supervision_preds.append(self.seg_outputs[i](x))
 
         if self.training:
             # Return all scales for Deep Supervision Loss
             # index 0 = low res, index -1 = high res
-            return deep_supervision_preds 
+            return deep_supervision_preds
         else:
             # Return only the final high-res prediction for validation/inference
             return deep_supervision_preds[-1]
