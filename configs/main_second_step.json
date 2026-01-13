@@ -2,7 +2,7 @@
   "architecture": "STU-Net",
   "dataset": "Competition",
   "training_step": "second",
-  "warmup_epochs": 5,
+  "warmup_epochs": 10,
   "pre_train_config": "../configs/pre_training.json",
   "learning_rate": 0.00002,
   "num_epochs": 1000,

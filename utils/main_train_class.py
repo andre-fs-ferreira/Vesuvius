@@ -444,12 +444,11 @@ class main_train_STU_Net(BaseTrainer):
         return val_loader
 
     def _resume(self):
-        # TODO
         if self.config.get('resume'):
             checkpoint = torch.load(self.config['resume'], map_location="cpu", weights_only=False) 
             # parameters
             self.start_epoch = checkpoint['epoch'] + 1 # To continue to the next epoch instead of repeating  
-            self.val_loss = checkpoint['val_loss']
+            self.val_value = checkpoint['val_value']
             # model load
             model_weights = checkpoint['model_weights']  
             self.model.load_state_dict(model_weights, strict=True)
@@ -458,7 +457,7 @@ class main_train_STU_Net(BaseTrainer):
             self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         else:
             self.start_epoch = 0
-            self.val_loss = 10000
+            self.val_value = 0
 
     def save_vol(self, tensor, path):
         # prediction: torch.Tensor
@@ -477,15 +476,16 @@ class main_train_STU_Net(BaseTrainer):
         nii = nib.Nifti1Image(tensor_np.astype(np.float32), affine)
         nib.save(nii, path)
         
-    def saving_logic(self, best_val_loss, val_avg_loss, epoch):
-        if best_val_loss > val_avg_loss: 
-            best_val_loss = val_avg_loss
+    def saving_logic(self, best_val_value, val_avg_value, epoch):
+        """ Logic to save the best model and periodic checkpoints """
+        if best_val_value < val_avg_value: 
+            best_val_value = val_avg_value
             save_path = join(self.model_save_path, f"model_best.pth")
             torch.save({
                     'epoch': epoch,
                     'model_weights': self.model.state_dict(),  
                     'optimizer_state_dict': self.optimizer.state_dict(),
-                    'val_loss': val_avg_loss,
+                    'val_value': val_avg_value,
                 }, save_path)
             print(f"Saved checkpoint: {save_path}")
 
@@ -496,11 +496,11 @@ class main_train_STU_Net(BaseTrainer):
                     'epoch': epoch,
                     'model_weights': self.model.state_dict(), 
                     'optimizer_state_dict': self.optimizer.state_dict(),
-                    'val_loss': val_avg_loss,
+                    'val_value': val_avg_value,
                 }, save_path)
             print(f"Saved checkpoint: {save_path}")
-        return best_val_loss
-    
+        return best_val_value
+
     def train_epoch(self, **kwargs):
         """Logic for a single training epoch. Returns average loss."""
         epoch = kwargs.get('epoch')
@@ -581,7 +581,7 @@ class main_train_STU_Net(BaseTrainer):
         warmup = kwargs.get('warmup')
 
         self.model.eval()
-        val_loss_sum = 0
+        val_value_sum = 0
 
         pbar = tqdm(self.val_loader, desc=f"Val epoch {epoch}/{self.config['num_epochs']}")
 
@@ -596,14 +596,14 @@ class main_train_STU_Net(BaseTrainer):
                 # Forward Pass
                 # The model tries to predict the segmentation
                 prediction = self.model(input_patch)
-                # Calculate Loss (Compare Prediction vs. GT)
-                val_loss = self.val_metric(pred=prediction, target=ground_truth, roi_mask=roi_mask)
+                # Calculate DSC (Compare Prediction vs. GT)
+                val_value = self.val_metric(pred=prediction, target=ground_truth, roi_mask=roi_mask)
                 
                 # commented to avoid overwhelming 
-                #self.wandb_run.log({"val_loss": val_loss.item()})
+                #self.wandb_run.log({"val_value": val_value.item()})
 
-            val_loss_sum += val_loss.item()
-            pbar.set_postfix({"DSC": val_loss.item()})
+            val_value_sum += val_value.item()
+            pbar.set_postfix({"DSC": val_value.item()})
 
         # Save a prediction
         if warmup:
@@ -613,9 +613,9 @@ class main_train_STU_Net(BaseTrainer):
         self.save_vol(prediction, join(self.preds_path, f"{pre_name}epoch_{epoch}_pred_val.nii.gz"))
         self.save_vol(input_patch, join(self.preds_path, f"{pre_name}epoch_{epoch}_input_val.nii.gz"))
         self.save_vol(ground_truth, join(self.preds_path, f"{pre_name}epoch_{epoch}_gt_val.nii.gz"))
-        val_avg_loss = val_loss_sum / len(self.val_loader)
-        print(f"Epoch {epoch} with validation avg Loss: {val_avg_loss:.6f}")
-        return val_avg_loss
+        val_avg_value = val_value_sum / len(self.val_loader)
+        print(f"Epoch {epoch} with validation avg DSC: {val_avg_value:.6f}")
+        return val_avg_value
 
     def _freeze_weights(self, **kwargs):
         """ Logic to freeze the layers that were loaded and unfrozing all randomly initiated """
@@ -685,7 +685,7 @@ class main_train_STU_Net(BaseTrainer):
         
     def train_loop(self, **kwargs):
         """Standardized training loop."""
-        best_val_loss = self.val_loss
+        best_val_value = self.val_value
         
         # Doing warmup stage
         if self.config['warmup_epochs'] > 0:
@@ -703,7 +703,7 @@ class main_train_STU_Net(BaseTrainer):
                 warmup=False
             )
             # Perform evaluation 
-            val_avg_loss = self.val(
+            val_avg_value = self.val(
                 epoch=self.epoch, 
                 warmup=False
             )
@@ -712,7 +712,7 @@ class main_train_STU_Net(BaseTrainer):
             log_train_data = {
                     "epoch_train": self.epoch,
                     "train_avg_loss": train_avg_loss,
-                    "val_avg_loss": val_avg_loss,
+                    "val_avg_value": val_avg_value,
                     "lr_train": self.optimizer.param_groups[0]['lr'] 
                 }
             for criterio_name in per_criterio_loss.keys():
@@ -722,9 +722,9 @@ class main_train_STU_Net(BaseTrainer):
             )
 
             # Checking if saving 
-            best_val_loss = self.saving_logic(
-                best_val_loss=best_val_loss, 
-                val_avg_loss=val_avg_loss, 
+            best_val_value = self.saving_logic(
+                best_val_value=best_val_value, 
+                val_avg_value=val_avg_value, 
                 epoch=self.epoch
             )
 
