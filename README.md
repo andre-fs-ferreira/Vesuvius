@@ -10,6 +10,12 @@
 ## Fine-tuning
 [] Fine tune:
     [] Fine-tune only on the regions with label 0 and 1.
+        [] Train for 100 epochs (check overfitting)
+            [] With Tversky and BCE (1:1)
+        [] Aftwerwards, train using the other metrics. Perform some testing.
+
+
+    [] In case of time...
         [] Loss functions to try:
             [] DSC (baseline)
             [] BE + DSC
