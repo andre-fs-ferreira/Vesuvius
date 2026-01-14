@@ -4,11 +4,11 @@
   "training_step": "second",
   "warmup_epochs": 10,
   "pre_train_config": "../configs/pre_training.json",
-  "learning_rate": 0.00002,
+  "learning_rate": 0.001,
   "num_epochs": 1000,
   "patch_size": [64, 64, 64],
-  "criterion": ["BCE", "Tversky", "CLDICE", "AntiBridge"],
-  "criterion_weights": [0.2, 0.3, 0.4, 0.5],
+  "criterion": ["Tversky", "BCE"],
+  "criterion_weights": [1.0, 1.0],
   "lr_scheduler": "CosineAnnealingLR",
   "device": "cuda",
 
@@ -16,13 +16,14 @@
   "checkpoint_path": "../checkpoints/5_scrolls_pretrain/wandb/run-20260106_194601-8i3dbvpd/files/model_epoch_820.pth",
   "vol_data_path": "../DataSet/Challenge_dataset_updated/train_images_nii_crop",
   "label_data_path": "../DataSet/Challenge_dataset_updated/train_labels_nii_crop",
+  "bridge_weight_map_path": "../DataSet/Challenge_dataset_updated/train_bridge_weight_map_crop",
   "data_split_json": "../DataSet/Challenge_dataset_updated/train_val_split.json",
-  "train_cache_rate": 0.0,
-  "val_cache_rate": 0.0,
+  "train_cache_rate": 1.0,
+  "val_cache_rate": 1.0,
 
   "batch_size": 1,
   "num_workers": 8,
 
   "resume": null,
-  "debug": false
+  "debug": true
 }

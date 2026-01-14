@@ -1,0 +1,15 @@
+{
+  "architecture": "STU-Net",
+  "patch_size": [64, 64, 64],
+  "device": "cuda",
+  "batch_size": 1,
+  "num_workers": 8,
+
+  "infer_overlap": 0.5,
+  "infer_sw_batch_size": 4,
+  "blend_mode": "gaussian",
+
+  "save_pred_dir": "",
+  "checkpoint_path": "/home/shadowtwin/Desktop/AI_work/Vesuvius_Challenge/Vesuvius/checkpoints/second_step/wandb/run-20260114_173955-aqjqbhze/files/model/model_best.pth",
+  "data_split_json": "../DataSet/Challenge_dataset_updated/train_val_split.json"
+}
