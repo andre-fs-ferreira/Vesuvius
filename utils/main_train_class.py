@@ -142,7 +142,7 @@ class main_train_STU_Net(BaseTrainer):
         """Initialize the neural network architecture with transfer learning logging."""
         print(f"Loading weights from: {self.config['checkpoint_path']}")
         
-        # Initialize the new Segmentation Model (2 output channels)
+        # Initialize the new Segmentation Model (1 output channels)
         model = STUNetSegmentation()
         model_state_dict = model.state_dict()
         
@@ -348,7 +348,10 @@ class main_train_STU_Net(BaseTrainer):
             complete_data_dict = {}
             complete_data_dict["image"] = join(self.config['vol_data_path'], train_case)
             complete_data_dict["gt"] = join(self.config['label_data_path'], train_case)
+            complete_data_dict["bridge_weight_map"] = join(self.config['bridge_weight_map_path'], train_case)
             data_list.append(complete_data_dict)
+            if self.config['debug'] and len(data_list) >= 4:
+                break  # Limit to 4 samples in debug mode
 
         print(f"Train cases: {len(train_cases)}")
         print(f"Some examples:")
@@ -357,8 +360,8 @@ class main_train_STU_Net(BaseTrainer):
         transforms = Compose(
             [   
                 # Load image 
-                LoadImaged(keys=["image", 'gt']),
-                EnsureChannelFirstd(keys=["image", 'gt']),
+                LoadImaged(keys=["image", 'gt', 'bridge_weight_map']),
+                EnsureChannelFirstd(keys=["image", 'gt', 'bridge_weight_map']),
 
                 # Normalize uint8 input
                 ScaleIntensityRanged(keys=["image"], a_min=0, a_max=255, b_min=0, b_max=1, clip=True),
@@ -370,8 +373,8 @@ class main_train_STU_Net(BaseTrainer):
                 #ResizeWithPadOrCropd(keys=["image", "gt"], spatial_size=self.config['patch_size']),
                 # Not ResizeWithPadOrCropd -> random crop
                 #RandSpatialCropSamplesd(keys=["image", 'gt'], roi_size=self.config['patch_size'], num_samples=1, random_size=False),
-                RandCropByPosNegLabeld(keys=["image", 'gt', 'roi_mask'], label_key='roi_mask', spatial_size=self.config['patch_size'], pos=1, neg=0, num_samples=1, image_key=None),
-                ResizeWithPadOrCropd(keys=["image", 'gt'], spatial_size=self.config['patch_size'], mode="minimum"),
+                RandCropByPosNegLabeld(keys=["image", 'gt', 'roi_mask', 'bridge_weight_map'], label_key='roi_mask', spatial_size=self.config['patch_size'], pos=1, neg=0, num_samples=1, image_key=None),
+                ResizeWithPadOrCropd(keys=["image", 'gt', 'bridge_weight_map'], spatial_size=self.config['patch_size'], mode="minimum"),
 
                 # Create multi-resolution ground truths for deep supervision
                 CopyItemsd(keys=["gt"], times=2, names=["gt_2layer", "gt_3layer"]),
@@ -380,7 +383,7 @@ class main_train_STU_Net(BaseTrainer):
                 #roi_mask = ground_truth != 2 -> roi_mask = roi_mask.float()
                 GetROIMaskdd(keys=["gt_2layer", "gt_3layer"], ignore_mask_value=2, new_key_names=["roi_mask_2layer", "roi_mask_3layer"]),
                 GetBinaryLabeld(keys=["gt", "gt_2layer", "gt_3layer"], ignore_mask_value=2),
-                EnsureTyped(keys=["image", "gt",  "gt_2layer", "gt_3layer", "roi_mask", "roi_mask_2layer", "roi_mask_3layer"], track_meta=False)
+                EnsureTyped(keys=["image", "gt",  "gt_2layer", "gt_3layer", "roi_mask", "roi_mask_2layer", "roi_mask_3layer", "bridge_weight_map"], track_meta=False)
             ]
         )
 
@@ -403,11 +406,24 @@ class main_train_STU_Net(BaseTrainer):
             split = json.load(f)
 
         val_cases = split["val"]
-        for val_case in val_cases:
-            complete_data_dict = {}
-            complete_data_dict["image"] = join(self.config['vol_data_path'], val_case)
-            complete_data_dict["gt"] = join(self.config['label_data_path'], val_case)
-            data_list.append(complete_data_dict)
+        if self.config['debug']:
+            print(f"Debug mode: Using training cases for validation dataloader")
+            train_cases = split["train"]
+            for train_case in train_cases:
+                complete_data_dict = {}
+                complete_data_dict["image"] = join(self.config['vol_data_path'], train_case)
+                complete_data_dict["gt"] = join(self.config['label_data_path'], train_case)
+                complete_data_dict["bridge_weight_map"] = join(self.config['bridge_weight_map_path'], train_case)
+                data_list.append(complete_data_dict)
+                if len(data_list) >= 4:
+                    break  # Limit to 4 samples in debug mode
+        else:
+            for val_case in val_cases:
+                complete_data_dict = {}
+                complete_data_dict["image"] = join(self.config['vol_data_path'], val_case)
+                complete_data_dict["gt"] = join(self.config['label_data_path'], val_case)
+                data_list.append(complete_data_dict)
+        
 
         print(f"Val cases: {len(val_cases)}")
         print(f"Some examples:")
@@ -528,8 +544,8 @@ class main_train_STU_Net(BaseTrainer):
                 batch_dict['roi_mask_2layer'].to(self.config['device']),
                 batch_dict['roi_mask'].to(self.config['device'])
             ]
-
-            bridge_weight_map = None # TODO could be added later if needed bridge_weight_map = batch_dict['bridge_weight_map'].to(self.config['device'])
+             # pre-computed weight map to penalize bridges - set None for on-fly computation
+            bridge_weight_map = batch_dict['bridge_weight_map'].to(self.config['device'])
             
             optimizer.zero_grad()
             # --- FP16 FORWARD PASS ---
