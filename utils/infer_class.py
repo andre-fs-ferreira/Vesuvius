@@ -1,0 +1,182 @@
+from abs_infer import BaseInfer
+from stunet_model import STUNetSegmentation
+
+import torch
+import nibabel as nib
+import numpy as np
+from torch.nn.functional import sigmoid
+
+import monai
+from monai.transforms.transform import MapTransform, Transform
+from monai.data import CacheDataset
+from monai.metrics import DiceHelper
+from monai.losses import DiceLoss, TverskyLoss, FocalLoss
+from monai.transforms import (
+    Compose,
+    CopyItemsd,
+    LoadImaged, 
+    ScaleIntensityRanged, 
+    ResizeWithPadOrCropd, 
+    RandCoarseDropoutd,
+    EnsureTyped,
+    EnsureChannelFirstd,
+    Resized,
+    RandSpatialCropSamplesd,
+    RandCropByPosNegLabeld
+)
+from monai.inferers import SlidingWindowInferer
+
+from mask_utils import GetROIMaskdd, GetBinaryLabeld
+
+class VesuviusInferer(BaseInfer):
+    def __init__(self, config):
+        self.config = config
+        self.model = self._build_model()
+        self.criterion = self._set_evaluation_criterion()
+        self.val_transforms = self._set_val_transforms()
+        self.test_transforms = self._set_test_transforms()
+        self.sliding_window = self._set_sliding_window_inferer()
+
+    def _build_model(self):
+        """Initialize the neural network architecture. Load pretrained weights if necessary."""
+        print(f"Loading weights from: {self.config['checkpoint_path']}")
+        
+        # Initialize the new Segmentation Model (1 output channels)
+        model = STUNetSegmentation()
+        
+        # Load trained Weights (1 output channel)
+        checkpoint_state_dict = torch.load(self.config['checkpoint_path'], map_location='cpu')
+        checkpoint_state_dict = checkpoint_state_dict['model_weights']
+        load_result = model.load_state_dict(checkpoint_state_dict, strict=True)
+        
+        # Move to GPU
+        model = model.to(self.config['device'])
+        return model
+
+    def _set_evaluation_criterion(self):
+        """Define the evaluation function."""
+        val_metric = DiceHelper
+        
+        def compute_masked_val(pred, target, roi_mask):
+            pred_masked = pred * roi_mask
+            pred_masked = (pred_masked > 0.5).float()
+            # check if empty
+            if torch.sum(pred_masked) == 0:
+                # If both pred and target are empty in the ROI, return Dice of 1.0
+                if torch.sum(target * roi_mask) == 0:
+                    return torch.tensor(1.0, device=target.device, dtype=torch.float32)
+                else:
+                    return torch.tensor(0.0, device=target.device, dtype=torch.float32)
+            target_masked = target * roi_mask
+            results = val_metric(include_background=True, sigmoid=False, softmax=False)(pred_masked, target_masked)
+            return results
+        return compute_masked_val
+        
+    def save_nifti(self, torch_tensor, save_path, real_file, **kwargs):
+        """Logic for saving predictions to disk."""
+        while torch_tensor.dim() > 3:
+            torch_tensor = torch_tensor.squeeze(0)
+
+        if real_file != None:
+            # Load the real file to get metadata
+            real_nii = nib.load(real_file)
+            real_affine = real_nii.affine
+            real_header = real_nii.header
+            pred_nii = nib.Nifti1Image(torch_tensor.cpu().numpy().astype('float32'), affine=real_affine, header=real_header)
+        else:
+            # If no real file is provided, use identity affine
+            affine = np.eye(4)
+            pred_nii = nib.Nifti1Image(torch_tensor.cpu().numpy().astype('float32'), affine=affine)
+
+        # Save the Nifti1Image to disk
+        nib.save(pred_nii, save_path)
+
+    def _set_dataloader_transforms(self, gt_available, **kwargs):
+        """Define the data loading and augmentation transforms."""
+
+        if gt_available:
+            general_keys = ["image", 'gt']
+            all_keys = ["image", 'gt', 'roi_mask']
+        else:
+            general_keys = ["image"]
+            all_keys = ["image"]
+
+        transform_list = [
+                LoadImaged(keys=general_keys),
+                EnsureChannelFirstd(keys=general_keys),
+                # Normalize uint8 input
+                ScaleIntensityRanged(keys=["image"], a_min=0, a_max=255, b_min=0, b_max=1, clip=True),
+            ]
+        
+        if gt_available:
+            transform_list.append(GetROIMaskdd(keys=["gt"], ignore_mask_value=2, new_key_names=["roi_mask"]))
+            transform_list.append(GetBinaryLabeld(keys=["gt"], ignore_mask_value=2))
+
+        # Get random patches
+        transform_list.append(EnsureTyped(keys=all_keys, track_meta=False))
+
+        return transform_list
+    
+    def _set_val_transforms(self, **kwargs):
+        """Define the validation data loading transforms."""
+        transform_list = self._set_dataloader_transforms(gt_available=True, **kwargs)
+        return Compose(transform_list)
+
+    def _set_test_transforms(self, **kwargs):   
+        """Define the test data loading transforms."""
+        transform_list = self._set_dataloader_transforms(gt_available=False, **kwargs)
+        return Compose(transform_list)
+
+    def load_input_data(self, file_dict, transforms, **kwargs):
+        '''
+        Monai data loading logic.
+        '''
+        transformed_data = transforms(file_dict)
+        return transformed_data
+    
+    def _set_sliding_window_inferer(self, **kwargs):
+        """Define the sliding window inferer."""
+        
+        inferer = monai.inferers.SlidingWindowInferer(
+            roi_size=self.config['patch_size'],
+            sw_batch_size=self.config['infer_sw_batch_size'],
+            overlap=self.config['infer_overlap'],
+            mode=self.config['blend_mode'],
+            padding_mode='constant',
+            cval=0.0,
+            device=self.config['device'],
+            progress=True
+        )
+
+        return inferer
+
+    def infer(self, input, test=False, threshold=0.5, **kwargs):
+        """Logic for inference. Returns predictions."""
+
+        if test:
+            data = self.load_input_data(file_dict=input, transforms=self.test_transforms)
+        else:
+            data = self.load_input_data(file_dict=input, transforms=self.val_transforms)
+
+        input_image = data['image'].unsqueeze(0).to(self.config['device'])
+
+        self.model.eval()
+        with torch.no_grad():
+            pred = self.sliding_window(inputs=input_image, network=self.model)
+            pred = sigmoid(pred)
+            pred[pred>threshold] = 1.0
+            pred[pred<=threshold] = 0.0
+
+        if test:
+            return pred
+        else:
+            return pred, data['gt'].unsqueeze(0).to(self.config['device']), data['roi_mask'].unsqueeze(0).to(self.config['device']) 
+
+    def evaluate(self, predictions, gt, roi_mask, **kwargs):
+        """
+        Logic for evaluation. Takes predictions and ground truth as input.
+        Returns a dictionary of metrics. 
+        Expected to be used after infer.
+        """
+        results = self.criterion(predictions, gt, roi_mask)
+        return results
