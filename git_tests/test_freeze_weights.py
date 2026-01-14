@@ -6,6 +6,7 @@ import os
 
 # Add the parent directory to path so we can import your main code
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../utils')))
 
 from main_train_class import main_train_STU_Net
 
