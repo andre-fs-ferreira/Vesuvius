@@ -20,7 +20,6 @@ from torch.amp import autocast, GradScaler
 
 # MONAI Specific Imports
 import monai
-from monai.transforms.transform import MapTransform, Transform
 from monai.data import CacheDataset
 from monai.metrics import DiceMetric
 from monai.losses import DiceLoss, TverskyLoss, FocalLoss
@@ -46,47 +45,7 @@ sys.path.append(os.path.abspath("../utils"))
 
 from cldice.cldice import soft_cldice
 from AntiBridgeLoss import AntiBridgeLoss
-
-class GetROIMaskdd(MapTransform):
-    """
-    Create a ROI mask from the ground truth by setting to 0 the regions with ignore_mask_value.
-    The ROI mask will have 1 where the ground truth is not equal to ignore_mask_value, and 0 elsewhere.
-    """
-
-    def __init__(self, keys, ignore_mask_value=2, new_key_names=None):
-        self.keys = keys
-        self.ignore_mask_value = ignore_mask_value
-        self.new_key_names = new_key_names
-
-    def __call__(self, data):
-        for key, new_key in zip(self.keys, self.new_key_names):
-            gt = data[key]
-            roi_mask = (gt != self.ignore_mask_value).float()
-            data[new_key] = roi_mask
-        return data
-
-class GetBinaryLabeld(MapTransform):
-    def __init__(self, keys, ignore_mask_value=2):
-        super().__init__(keys)
-        self.ignore_mask_value = ignore_mask_value
-
-    def __call__(self, data):
-        d = dict(data)
-        for key in self.key_iterator(d):
-            val = d[key]
-            # 1. Use a small epsilon for the ignore value check (safety)
-            # This handles values like 1.999 or 2.0000153
-            mask = (val > (self.ignore_mask_value - 0.1)) & (val < (self.ignore_mask_value + 0.1))
-            val[mask] = 0
-            
-            # 2. FORCE the remaining values into strictly 0 or 1
-            # Anything that isn't background (0) should be 1
-            # This fixes the 1.0000153 issue
-            val[val > 0.5] = 1.0
-            val[val <= 0.5] = 0.0
-            
-            d[key] = val
-        return d
+from mask_utils import GetROIMaskdd, GetBinaryLabeld
 
 class main_train_STU_Net(BaseTrainer):
     def __init__(self, config):
@@ -98,8 +57,7 @@ class main_train_STU_Net(BaseTrainer):
         self.train_criterion = self._set_train_criterion() # DONE
         self.val_metric = self._set_val_metric() # DONE
         self.scheduler = self._set_scheduler() # DONE
-        if not self.config['debug']:
-            self.wandb_run = self._set_wandb_checkpoint() # DONE
+        self.wandb_run = self._set_wandb_checkpoint() # DONE
         self.train_loader = self._set_train_dataloader() # DONE
         self.val_loader = self._set_val_dataloader() # DONE
 
@@ -312,7 +270,7 @@ class main_train_STU_Net(BaseTrainer):
         return combined_loss 
 
     def _set_val_metric(self):
-        """Define the loss function."""
+        """Define the eval function."""
         val_metric = DiceMetric(
             include_background=True,
             get_not_nans=True
@@ -350,8 +308,12 @@ class main_train_STU_Net(BaseTrainer):
             complete_data_dict["gt"] = join(self.config['label_data_path'], train_case)
             complete_data_dict["bridge_weight_map"] = join(self.config['bridge_weight_map_path'], train_case)
             data_list.append(complete_data_dict)
-            if self.config['debug'] and len(data_list) >= 4:
-                break  # Limit to 4 samples in debug mode
+            
+            if self.config['debug']: # TODO
+                for i in range(30):
+                    data_list.append(complete_data_dict)
+                print(f"training using case: {data_list[0]}")
+                break  # repeat 30 cases for debug mode
 
         print(f"Train cases: {len(train_cases)}")
         print(f"Some examples:")
@@ -415,8 +377,8 @@ class main_train_STU_Net(BaseTrainer):
                 complete_data_dict["gt"] = join(self.config['label_data_path'], train_case)
                 complete_data_dict["bridge_weight_map"] = join(self.config['bridge_weight_map_path'], train_case)
                 data_list.append(complete_data_dict)
-                if len(data_list) >= 4:
-                    break  # Limit to 4 samples in debug mode
+                print(f"Validation using case: {train_case}")
+                break  # The same training sample for validation in debug mode
         else:
             for val_case in val_cases:
                 complete_data_dict = {}
@@ -439,7 +401,7 @@ class main_train_STU_Net(BaseTrainer):
                 # Create a ROI mask for cropping 
                 GetROIMaskdd(keys=["gt"], ignore_mask_value=2, new_key_names=["roi_mask"]),
                 # Get random patches
-                RandCropByPosNegLabeld(keys=["image", 'gt', 'roi_mask'], label_key='roi_mask', spatial_size=self.config['patch_size'], pos=1, neg=0, num_samples=1, image_key=None),
+                RandCropByPosNegLabeld(keys=["image", 'gt', 'roi_mask'], label_key='roi_mask', spatial_size=self.config['patch_size'], pos=1, neg=1, num_samples=1, image_key=None),
                 ResizeWithPadOrCropd(keys=["image", "gt", "roi_mask"], spatial_size=self.config['patch_size']),
                 GetBinaryLabeld(keys=["gt"], ignore_mask_value=2),
                 EnsureTyped(keys=["image", "gt", "roi_mask"], track_meta=False)
@@ -494,6 +456,7 @@ class main_train_STU_Net(BaseTrainer):
         
     def saving_logic(self, best_val_value, val_avg_value, epoch):
         """ Logic to save the best model and periodic checkpoints """
+        """ # TODO uncomment
         if best_val_value < val_avg_value: 
             best_val_value = val_avg_value
             save_path = join(self.model_save_path, f"model_best.pth")
@@ -504,9 +467,9 @@ class main_train_STU_Net(BaseTrainer):
                     'val_value': val_avg_value,
                 }, save_path)
             print(f"Saved checkpoint: {save_path}")
-
+        """
         # Save Checkpoint
-        if epoch % 10 == 0:
+        if epoch % 100 == 0: # TODO
             save_path = join(self.model_save_path, f"model_epoch_{epoch}.pth")
             torch.save({
                     'epoch': epoch,
@@ -680,7 +643,7 @@ class main_train_STU_Net(BaseTrainer):
                 warmup=True
             )
             # Perform evaluation 
-            val_avg_loss = self.val(
+            val_avg_value = self.val(
                 epoch=warmup_epoch, 
                 warmup=True
             )
@@ -688,7 +651,7 @@ class main_train_STU_Net(BaseTrainer):
             warmup_log_train_data = {
                     "warmup_epoch": warmup_epoch,
                     "train_avg_loss": train_avg_loss,
-                    "val_avg_loss": val_avg_loss,
+                    "val_avg_value": val_avg_value,
                     "lr": warm_up_opt.param_groups[0]['lr']
                 }
             for criterio_name in per_criterio_loss.keys():
