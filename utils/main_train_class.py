@@ -158,6 +158,7 @@ class main_train_STU_Net(BaseTrainer):
 
         # Move to GPU
         model = model.to(self.config['device'])
+
         return model, load_result.missing_keys
 
     def _set_optimizer(self):
@@ -266,27 +267,51 @@ class main_train_STU_Net(BaseTrainer):
                 total_loss += w * loss_here
                 losses_dict[crit] = loss_here.item()
             return total_loss, losses_dict
-        
         return combined_loss 
 
     def _set_val_metric(self):
-        """Define the eval function."""
-        val_metric = DiceMetric(
-            include_background=True,
-            get_not_nans=True
-        )
+        # Initialize the MONAI metric
+        dice_metric = DiceMetric(include_background=True, reduction="mean", get_not_nans=True)
+
         def compute_masked_val(pred, target, roi_mask):
-            pred_masked = sigmoid(pred) * roi_mask
-            pred_masked = (pred_masked > 0.5).float()
-            # check if empty
-            if torch.sum(pred_masked) == 0:
-                # If both pred and target are empty in the ROI, return Dice of 1.0
-                if torch.sum(target * roi_mask) == 0:
-                    return torch.tensor(1.0, device=target.device, dtype=torch.float32)
-                else:
-                    return torch.tensor(0.0, device=target.device, dtype=torch.float32)
+            # Prepare Prediction (Sigmoid + Threshold)
+            pred_prob = torch.sigmoid(pred)
+            pred_masked = (pred_prob * roi_mask > 0.5).float()
+            
+            # Prepare Target (Masking the ignore regions)
             target_masked = target * roi_mask
-            return val_metric(pred_masked, target_masked)
+
+            # Handle the "All Empty" Case manually before the metric
+            # Dice is usually undefined (0/0) when both are empty. 
+            # Here we define "Correctly Empty" as 1.0 and "Wrongly Empty" as 0.0.
+            target_sum = torch.sum(target_masked)
+            pred_sum = torch.sum(pred_masked)
+
+            if target_sum == 0:
+                if pred_sum == 0:
+                    return torch.tensor(1.0, device=target.device)
+                else:
+                    return torch.tensor(0.0, device=target.device)
+
+            # Use MONAI metric for non-empty targets
+            # Ensure inputs have a batch dimension [B, C, H, W, D]
+            # if they are [C, H, W, D], add a batch dim with .unsqueeze(0)
+            if pred_masked.ndim == 3: # assuming 3D image
+                pred_masked = pred_masked.unsqueeze(0).unsqueeze(0)
+                target_masked = target_masked.unsqueeze(0).unsqueeze(0)
+
+            dice_metric.reset() # Clear previous state
+            dice_metric(y_pred=pred_masked, y=target_masked)
+
+            # Unpack the tuple: the first element is the Dice score
+            aggregate_results = dice_metric.aggregate()
+
+            if isinstance(aggregate_results, (list, tuple)):
+                val_results = aggregate_results[0].item()
+            else:
+                val_results = aggregate_results.item()
+                            
+            return val_results
         return compute_masked_val
          
     def _set_scheduler(self):
@@ -309,7 +334,7 @@ class main_train_STU_Net(BaseTrainer):
             complete_data_dict["bridge_weight_map"] = join(self.config['bridge_weight_map_path'], train_case)
             data_list.append(complete_data_dict)
             
-            if self.config['debug']: # TODO
+            if self.config['debug']:
                 for i in range(30):
                     data_list.append(complete_data_dict)
                 print(f"training using case: {data_list[0]}")
@@ -357,9 +382,15 @@ class main_train_STU_Net(BaseTrainer):
             num_workers=self.config['num_workers'], 
             progress=True
         )
-        
-        print("Initializing Val DataLoader...")
-        train_loader = monai.data.DataLoader(train_ds, batch_size=self.config['batch_size'], num_workers=self.config['num_workers'])
+
+        print("Initializing Train DataLoader...")
+        train_loader = monai.data.DataLoader(
+            train_ds, 
+            batch_size=self.config['batch_size'], 
+            num_workers=self.config['num_workers'],
+            shuffle=True,      
+            pin_memory=True
+        )
         return train_loader
 
     def _set_val_dataloader(self):
@@ -368,7 +399,8 @@ class main_train_STU_Net(BaseTrainer):
             split = json.load(f)
 
         val_cases = split["val"]
-        if self.config['debug']:
+
+        if self.config['debug']: 
             print(f"Debug mode: Using training cases for validation dataloader")
             train_cases = split["train"]
             for train_case in train_cases:
@@ -385,7 +417,6 @@ class main_train_STU_Net(BaseTrainer):
                 complete_data_dict["image"] = join(self.config['vol_data_path'], val_case)
                 complete_data_dict["gt"] = join(self.config['label_data_path'], val_case)
                 data_list.append(complete_data_dict)
-        
 
         print(f"Val cases: {len(val_cases)}")
         print(f"Some examples:")
@@ -401,7 +432,7 @@ class main_train_STU_Net(BaseTrainer):
                 # Create a ROI mask for cropping 
                 GetROIMaskdd(keys=["gt"], ignore_mask_value=2, new_key_names=["roi_mask"]),
                 # Get random patches
-                RandCropByPosNegLabeld(keys=["image", 'gt', 'roi_mask'], label_key='roi_mask', spatial_size=self.config['patch_size'], pos=1, neg=1, num_samples=1, image_key=None),
+                RandCropByPosNegLabeld(keys=["image", 'gt', 'roi_mask'], label_key='roi_mask', spatial_size=self.config['patch_size'], pos=1, neg=0, num_samples=1, image_key=None),
                 ResizeWithPadOrCropd(keys=["image", "gt", "roi_mask"], spatial_size=self.config['patch_size']),
                 GetBinaryLabeld(keys=["gt"], ignore_mask_value=2),
                 EnsureTyped(keys=["image", "gt", "roi_mask"], track_meta=False)
@@ -456,7 +487,7 @@ class main_train_STU_Net(BaseTrainer):
         
     def saving_logic(self, best_val_value, val_avg_value, epoch):
         """ Logic to save the best model and periodic checkpoints """
-        """ # TODO uncomment
+
         if best_val_value < val_avg_value: 
             best_val_value = val_avg_value
             save_path = join(self.model_save_path, f"model_best.pth")
@@ -467,9 +498,9 @@ class main_train_STU_Net(BaseTrainer):
                     'val_value': val_avg_value,
                 }, save_path)
             print(f"Saved checkpoint: {save_path}")
-        """
+        
         # Save Checkpoint
-        if epoch % 100 == 0: # TODO
+        if epoch % 10 == 0: 
             save_path = join(self.model_save_path, f"model_epoch_{epoch}.pth")
             torch.save({
                     'epoch': epoch,
@@ -509,8 +540,8 @@ class main_train_STU_Net(BaseTrainer):
             ]
              # pre-computed weight map to penalize bridges - set None for on-fly computation
             bridge_weight_map = batch_dict['bridge_weight_map'].to(self.config['device'])
-            
             optimizer.zero_grad()
+
             # --- FP16 FORWARD PASS ---
             with autocast(device_type=self.config['device']):
                 # Forward Pass
@@ -537,15 +568,16 @@ class main_train_STU_Net(BaseTrainer):
             for criterio_name in self.config['criterion']:
                 per_criterio_loss[criterio_name] += losses_dict[criterio_name]
             pbar.set_postfix({"Loss": train_loss.item()})
-            
-        # Save a prediction
+        
         if warmup:
             pre_name = "warmup_"
         else:
             pre_name = ""
-        self.save_vol(prediction[-1], join(self.preds_path, f"{pre_name}epoch_{epoch}_pred_train.nii.gz"))
-        self.save_vol(input_patch, join(self.preds_path, f"{pre_name}epoch_{epoch}_input_train.nii.gz"))
-        self.save_vol(ground_truth[-1], join(self.preds_path, f"{pre_name}epoch_{epoch}_gt_train.nii.gz"))
+        if epoch%10 == 0:
+            # Save a prediction
+            self.save_vol(prediction[-1], join(self.preds_path, f"{pre_name}epoch_{epoch}_pred_train.nii.gz"))
+            self.save_vol(input_patch, join(self.preds_path, f"{pre_name}epoch_{epoch}_input_train.nii.gz"))
+            self.save_vol(ground_truth[-1], join(self.preds_path, f"{pre_name}epoch_{epoch}_gt_train.nii.gz"))
 
         train_avg_loss = epoch_loss / len(self.train_loader)
         print(f"{pre_name} Epoch {epoch} Finished. Avg Loss: {train_avg_loss:.6f}")
@@ -581,17 +613,23 @@ class main_train_STU_Net(BaseTrainer):
                 # commented to avoid overwhelming 
                 #self.wandb_run.log({"val_value": val_value.item()})
 
-            val_value_sum += val_value.item()
-            pbar.set_postfix({"DSC": val_value.item()})
+            val_value_sum += val_value
+            pbar.set_postfix({"DSC": val_value})
 
-        # Save a prediction
-        if warmup:
-            pre_name = "warmup_"
-        else:
-            pre_name = ""
-        self.save_vol(prediction, join(self.preds_path, f"{pre_name}epoch_{epoch}_pred_val.nii.gz"))
-        self.save_vol(input_patch, join(self.preds_path, f"{pre_name}epoch_{epoch}_input_val.nii.gz"))
-        self.save_vol(ground_truth, join(self.preds_path, f"{pre_name}epoch_{epoch}_gt_val.nii.gz"))
+        if epoch%10 == 0:
+            # Save a prediction
+            if warmup:
+                pre_name = "warmup_"
+            else:
+                pre_name = ""
+            pred_save = sigmoid(prediction)
+            pred_save[pred_save>0.5] = 1.0
+            pred_save[pred_save<=0.5] = 0.0
+            self.save_vol(prediction, join(self.preds_path, f"{pre_name}epoch_{epoch}_logits_val.nii.gz"))
+            self.save_vol(pred_save, join(self.preds_path, f"{pre_name}epoch_{epoch}_pred_val.nii.gz"))
+            self.save_vol(input_patch, join(self.preds_path, f"{pre_name}epoch_{epoch}_input_val.nii.gz"))
+            self.save_vol(ground_truth, join(self.preds_path, f"{pre_name}epoch_{epoch}_gt_val.nii.gz"))
+
         val_avg_value = val_value_sum / len(self.val_loader)
         print(f"Epoch {epoch} with validation avg DSC: {val_avg_value:.6f}")
         return val_avg_value
@@ -601,25 +639,94 @@ class main_train_STU_Net(BaseTrainer):
         print("\n" + "="*50)
         print("FREEZING REPORT")
         print("="*50)
+
+        always_train_layers = ["seg_outputs"]
         
         frozen_count = 0
         trainable_count = 0
         for name, param in self.model.named_parameters():
             # If the parameter name is NOT in missing_keys, it means it was loaded successfully.
+            is_forced_trainable = any(layer_name in name for layer_name in always_train_layers)
+
+            if is_forced_trainable:
+                param.requires_grad = True
+                trainable_count += 1
+                print(f"🔥 Trainable (Forced): {name}")
             # We want to FREEZE these.
-            if name not in self.mising_weights:
+            elif name not in self.mising_weights:
                 param.requires_grad = False
                 frozen_count += 1
             else:
                 # It is a missing key (new head or mismatched shape), keep trainable.
                 param.requires_grad = True
                 trainable_count += 1
-                print(f"🔥 Trainable Layer: {name}")
+                print(f"🔥 Trainable Layer (missing/new): {name}")
                 
         print(f"❄️  Frozen Layers (Backbone): {frozen_count}")
         print(f"🔥 Trainable Layers (New Heads): {trainable_count}")
         print("="*50 + "\n")
         return 0
+
+    def unfreeze_next_layer(self):
+        """
+        Unfreezes the next 'block' of layers moving from Output -> Input.
+        It identifies the first frozen parameter it encounters (in reverse)
+        and unfreezes all parameters belonging to that same parent module.
+        """
+        print("\n" + "="*50)
+        print("UNFREEZING NEXT LAYER")
+        print("="*50)
+
+        # 1. Get all parameters in REVERSE order (Output -> Input)
+        # We convert to list so we can reverse it easily
+        params = list(self.model.named_parameters())
+        reversed_params = params[::-1]
+
+        layer_prefix_to_unfreeze = None
+        
+        # 2. Find the first parameter that is currently FROZEN
+        for name, param in reversed_params:
+            if not param.requires_grad:
+                # We found a frozen parameter!
+                # Get its parent module name (remove .weight or .bias)
+                # e.g., "encoder.blocks.1.conv1.weight" -> "encoder.blocks.1.conv1"
+                parts = name.split(".")
+                
+                # Dynamic slice: if deep, go up 2 levels (block); if shallow, go up 1 level
+                slice_idx = -2 if len(parts) > 2 else -1
+                
+                layer_prefix_to_unfreeze = ".".join(parts[:slice_idx])
+                
+                # Check for empty string edge case
+                if not layer_prefix_to_unfreeze:
+                    layer_prefix_to_unfreeze = parts[0]
+
+                print(f"🧊 Found frozen parameter: {name}")
+                print(f"🎯 Target prefix to unfreeze: {layer_prefix_to_unfreeze}")
+                break
+                
+        # 3. If everything is already trainable, we are done
+        if layer_prefix_to_unfreeze is None:
+            print("🎉 All layers are already unfrozen!")
+            return True
+
+        # 4. Unfreeze all parameters that belong to this detected module
+        count = 0
+        print(f"🔓 Unfreezing Block: {layer_prefix_to_unfreeze}")
+        
+        for name, param in self.model.named_parameters():
+            if name.startswith(layer_prefix_to_unfreeze):
+                param.requires_grad = True
+                count += 1
+                # print(f"   -> {name}") # Uncomment for verbose details
+
+        print(f"✅ Unfrozen {count} parameters in this step.")
+        
+        # 5. Quick check on what remains frozen
+        remaining_frozen = sum(1 for p in self.model.parameters() if not p.requires_grad)
+        print(f"❄️  Remaining Frozen Parameters: {remaining_frozen}")
+        print("="*50 + "\n")
+        return False
 
     def warmup_train(self, **kwargs):
         """ Perform warmup by freezen all loaded weights and training only the new weights """
@@ -632,10 +739,48 @@ class main_train_STU_Net(BaseTrainer):
         self._freeze_weights()
 
         # Take old learning rate (used for pre-training)
-        warm_up_opt = optim.AdamW(self.model.parameters(), lr=pre_train_config['learning_rate'])
+        warm_up_opt = optim.AdamW(filter(lambda p: p.requires_grad, self.model.parameters()), lr=pre_train_config['learning_rate'])
         
         warmup_epoch = 0
+
+        ## warmup loop for the first set of frozen weights
         for warmup_epoch in range(self.config['warmup_epochs']):
+            # train one warmup epoch 
+            train_avg_loss, per_criterio_loss = self.train_epoch(
+                epoch=warmup_epoch,
+                optimizer=warm_up_opt,
+                warmup=True
+            )
+            # Perform evaluation 
+            val_avg_value = self.val(
+                epoch=warmup_epoch, 
+                warmup=True
+            )
+
+            warmup_log_train_data = {
+                    "warmup_epoch": warmup_epoch,
+                    "train_avg_loss": train_avg_loss,
+                    "val_avg_value": val_avg_value,
+                    "lr": warm_up_opt.param_groups[0]['lr']
+                }
+            for criterio_name in per_criterio_loss.keys():
+                warmup_log_train_data[criterio_name] = per_criterio_loss[criterio_name]
+
+            self.wandb_run.log(
+                warmup_log_train_data
+            )
+        ## Progressive unfrozening and warmup (for decoder to encoder)  
+        ALL_UNFROZEN = False
+        while not ALL_UNFROZEN:
+            warmup_epoch += 1
+            # Unfreeze the next layer
+            ALL_UNFROZEN = self.unfreeze_next_layer()
+
+            if ALL_UNFROZEN:
+                print("🏁 Full model unfrozen. Proceeding to main training.")
+                break
+            
+            warm_up_opt = optim.AdamW(filter(lambda p: p.requires_grad, self.model.parameters()), lr=self.config['learning_rate'])
             # train one warmup epoch 
             train_avg_loss, per_criterio_loss = self.train_epoch(
                 epoch=warmup_epoch,
