@@ -27,6 +27,12 @@ from monai.transforms import (
 from monai.inferers import SlidingWindowInferer
 
 from mask_utils import GetROIMaskdd, GetBinaryLabeld
+import tifffile  
+
+import os
+import glob
+import pandas as pd
+from tqdm import tqdm  # 🚀 Import tqdm
 
 class VesuviusInferer(BaseInfer):
     def __init__(self, config):
@@ -74,22 +80,34 @@ class VesuviusInferer(BaseInfer):
         
     def save_nifti(self, torch_tensor, save_path, real_file, **kwargs):
         """Logic for saving predictions to disk."""
-        while torch_tensor.dim() > 3:
-            torch_tensor = torch_tensor.squeeze(0)
+        # Ensure tensor is 3D (H, W, D) or (H, W)
+        data = torch_tensor.detach().cpu().numpy().astype('float32')
+        while data.ndim > 3:
+            data = np.squeeze(data, axis=0)
 
-        if real_file != None:
+        if real_file is not None:
             # Load the real file to get metadata
             real_nii = nib.load(real_file)
             real_affine = real_nii.affine
             real_header = real_nii.header
-            pred_nii = nib.Nifti1Image(torch_tensor.cpu().numpy().astype('float32'), affine=real_affine, header=real_header)
+            pred_nii = nib.Nifti1Image(data, affine=real_affine, header=real_header)
         else:
             # If no real file is provided, use identity affine
             affine = np.eye(4)
-            pred_nii = nib.Nifti1Image(torch_tensor.cpu().numpy().astype('float32'), affine=affine)
+            pred_nii = nib.Nifti1Image(data, affine=affine)
 
         # Save the Nifti1Image to disk
         nib.save(pred_nii, save_path)
+    
+    def save_tiff(self, torch_tensor, save_path, **kwargs):
+        """Logic for saving predictions to disk."""
+        # Ensure tensor is 3D (H, W, D) or (H, W)
+        data = torch_tensor.detach().cpu().numpy().astype('uint8')
+        
+        # If the data is a probability map (0-1), 
+        # many Vesuvius tools expect uint16 or uint8
+        # Convert if necessary: (data * 255).astype('uint8')
+        tifffile.imwrite(save_path, data)
 
     def _set_dataloader_transforms(self, gt_available, **kwargs):
         """Define the data loading and augmentation transforms."""
@@ -129,7 +147,7 @@ class VesuviusInferer(BaseInfer):
 
     def load_input_data(self, file_dict, transforms, **kwargs):
         '''
-        Monai data loading logic.
+        Monai data loading logic. It must handle tiff files.
         '''
         transformed_data = transforms(file_dict)
         return transformed_data
@@ -172,6 +190,17 @@ class VesuviusInferer(BaseInfer):
         else:
             return pred, data['gt'].unsqueeze(0).to(self.config['device']), data['roi_mask'].unsqueeze(0).to(self.config['device']) 
 
+    def create_dfs(self, path_dir):
+        # Generate DataFrame
+        result_df = glob.glob(os.path.join(path_dir, '**/*.tif'), recursive=True)
+        result_df = pd.DataFrame({'tif_paths': result_df})
+        result_df['id'] = result_df['tif_paths'].apply(lambda x: os.path.basename(x).split('.')[0])
+
+        # save dataframe to csv (take name from the path_dir last folder)
+        csv_name = os.path.basename(os.path.normpath(path_dir)) + '_df.csv'
+        result_df.to_csv(os.path.join(path_dir, csv_name), index=False)
+        return result_df
+
     def evaluate(self, predictions, gt, roi_mask, **kwargs):
         """
         Logic for evaluation. Takes predictions and ground truth as input.
@@ -180,3 +209,36 @@ class VesuviusInferer(BaseInfer):
         """
         results = self.criterion(predictions, gt, roi_mask)
         return results
+    
+    def dataset_inference(self, dataset_path, pred_save_dir):
+        """ inference on all cases in a dataset directory and save predictions """
+        os.makedirs(pred_save_dir, exist_ok=True)
+        all_cases = glob.glob(os.path.join(dataset_path, '**/*.tif'), recursive=True)
+        
+        # 🏁 Wrap the list in tqdm for a visual progress bar
+        # 'desc' adds a label to the bar, 'unit' labels each iteration
+        for case in tqdm(all_cases, desc="🌋 Running Vesuvius Inference", unit="vol"):
+            # Optional: you can still print the case, but it might "flicker" the bar. 
+            # Using tqdm.write() keeps the bar at the bottom.
+            # tqdm.write(f"🔍 Processing: {os.path.basename(case)}")
+            
+            input_data = {
+                'image': str(case),
+                'gt': None
+            }
+            
+            pred = self.infer(input_data, test=True)
+            
+            # 💾 Robust filename extraction
+            file_name = os.path.basename(case).replace('.tif', '')
+            save_path = os.path.join(pred_save_dir, f"{file_name}.tif")
+            
+            self.save_tiff(
+                torch_tensor=pred, 
+                save_path=save_path
+            )
+
+        # 📊 Creating the dataframe for testing
+        print("\n📝 Generating submission dataframes...")
+        self.create_dfs(pred_save_dir)
+        print(f"✅ Inference completed. Predictions saved to: {pred_save_dir}")
