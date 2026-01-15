@@ -1,0 +1,25 @@
+# --- Core Deep Learning & Imaging ---
+torch==2.9.1
+torchaudio==2.9.1
+torchvision==0.24.1
+monai==1.5.1
+itk==5.4.5
+simpleitk==2.5.3
+vesuvius==0.2.2
+
+# --- Scientific & Data Analysis ---
+numpy==2.3.5
+pandas==2.3.3
+scipy==1.17.0
+scikit-image==0.25.2
+zarr==2.18.7
+nibabel==5.3.2
+pydicom==3.0.1
+pynrrd==1.1.3
+
+# --- Visualization & Utilities ---
+matplotlib==3.10.7
+tifffile==2025.10.16
+ImageIO==2.37.2
+tqdm==4.67.1
+wandb==0.23.1

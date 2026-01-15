@@ -9,7 +9,8 @@
   "infer_sw_batch_size": 4,
   "blend_mode": "gaussian",
 
-  "save_pred_dir": "",
-  "checkpoint_path": "/home/shadowtwin/Desktop/AI_work/Vesuvius_Challenge/Vesuvius/checkpoints/second_step/wandb/run-20260114_173955-aqjqbhze/files/model/model_best.pth",
-  "data_split_json": "../DataSet/Challenge_dataset_updated/train_val_split.json"
+  "checkpoint_path": "/home/shadowtwin/Desktop/AI_work/Vesuvius_Challenge/Vesuvius/checkpoints/second_step/wandb/run-20260115_141541-36wyonm0/files/model/model_epoch_40.pth",
+  "dataset_path": "/home/shadowtwin/Desktop/AI_work/Vesuvius_Challenge/Vesuvius/DataSet/test_images",
+  "dataset_path_gt": "/home/shadowtwin/Desktop/AI_work/Vesuvius_Challenge/Vesuvius/DataSet/test_labels",
+  "pred_save_dir": "/home/shadowtwin/Desktop/AI_work/Vesuvius_Challenge/Vesuvius/DataSet/test_pred"
 }
