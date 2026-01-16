@@ -1,0 +1,23 @@
+{
+  "architecture": "STU-Net",
+  "dataset": "5 scrolls",
+  "learning_rate": 0.0001,
+  "num_epochs": 1000,
+  "patch_size": [128, 128, 128],
+  "criterion": "L1",
+  "mask_weight": 10,
+  "lr_scheduler": "CosineAnnealingLR",
+  "device": "cuda",
+
+  "save_dir": "/mounts/disk4_tiago_e_andre/vesuvius/Vesuvius/checkpoints/5_scrolls_pretrain",
+  "checkpoint_path": "/mounts/disk4_tiago_e_andre/vesuvius/Vesuvius/checkpoints/pre-trained/Independent/binary_large_ep4k.pth",
+  "data_path": "/mounts/disk4_tiago_e_andre/vesuvius/Vesuvius/DataSet/Pre-training",
+  "val_data_path": "/mounts/disk4_tiago_e_andre/vesuvius/Vesuvius/DataSet/Challenge_dataset",
+  "val_cache_rate": 1.0,
+
+  "batch_size": 2,
+  "num_workers": 8,
+
+  "resume": "/mounts/disk4_tiago_e_andre/vesuvius/Vesuvius/checkpoints/5_scrolls_pretrain/wandb/run-20260106_194601-8i3dbvpd/files/model/model_epoch_840.pth",
+  "debug": false
+}
