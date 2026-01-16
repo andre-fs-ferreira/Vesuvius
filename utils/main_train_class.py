@@ -244,7 +244,12 @@ class main_train_STU_Net(BaseTrainer):
                         # apply activation befofre masking to ensure 0 in the region to ignore
                         pred_masked = sigmoid(sub_pred)*sub_roi_mask
                         target_masked = sub_target*sub_roi_mask
-                        loss_here += loss_fn(pred_masked, target_masked)*sub_dsw
+                        loss_value = loss_fn(pred_masked, target_masked)*sub_dsw
+                        loss_here += loss_value
+                    # Save last for quality control (to be able to compare with val loss)
+                    # The last one is the full resolution
+                    if len(pred) > 1:
+                        losses_dict[f"{crit}_fullres"] = loss_value.item() * w
                 # In here, the functions use sigmoid internally
                 elif crit=='BCE' or crit=='Focal':
                     for sub_pred, sub_target, sub_roi_mask, sub_dsw in zip(pred, target, roi_mask, deep_supervision_weights):
@@ -253,7 +258,13 @@ class main_train_STU_Net(BaseTrainer):
                         else:
                             loss_raw = loss_fn(sub_pred, sub_target)
                         loss_masked = loss_raw * sub_roi_mask
-                        loss_here += (loss_masked.sum() / (sub_roi_mask.sum() + 1e-8))*sub_dsw
+                        loss_value = (loss_masked.sum() / (sub_roi_mask.sum() + 1e-8))*sub_dsw
+                        loss_here += loss_value
+
+                    # Save last for quality control (to be able to compare with val loss)
+                    # The last one is the full resolution
+                    if len(pred) > 1:
+                        losses_dict[f"{crit}_fullres"] = loss_value.item() * w
 
                 # NO DEEP SUPERVISON FOR THESE LOSSES
                 elif crit=='CLDICE':
@@ -416,6 +427,7 @@ class main_train_STU_Net(BaseTrainer):
                 complete_data_dict = {}
                 complete_data_dict["image"] = join(self.config['vol_data_path'], val_case)
                 complete_data_dict["gt"] = join(self.config['label_data_path'], val_case)
+                complete_data_dict["bridge_weight_map"] = join(self.config['bridge_weight_map_path'], val_case)
                 data_list.append(complete_data_dict)
 
         print(f"Val cases: {len(val_cases)}")
@@ -425,17 +437,17 @@ class main_train_STU_Net(BaseTrainer):
         transforms = Compose(
             [   
                 # Load image 
-                LoadImaged(keys=["image", 'gt']),
-                EnsureChannelFirstd(keys=["image", 'gt']),
+                LoadImaged(keys=["image", 'gt', 'bridge_weight_map']),
+                EnsureChannelFirstd(keys=["image", 'gt', 'bridge_weight_map']),
                 # Normalize uint8 input
                 ScaleIntensityRanged(keys=["image"], a_min=0, a_max=255, b_min=0, b_max=1, clip=True),
                 # Create a ROI mask for cropping 
                 GetROIMaskdd(keys=["gt"], ignore_mask_value=2, new_key_names=["roi_mask"]),
                 # Get random patches
-                RandCropByPosNegLabeld(keys=["image", 'gt', 'roi_mask'], label_key='roi_mask', spatial_size=self.config['patch_size'], pos=1, neg=0, num_samples=1, image_key=None),
-                ResizeWithPadOrCropd(keys=["image", "gt", "roi_mask"], spatial_size=self.config['patch_size']),
+                RandCropByPosNegLabeld(keys=["image", 'gt', 'roi_mask', 'bridge_weight_map'], label_key='roi_mask', spatial_size=self.config['patch_size'], pos=1, neg=0, num_samples=1, image_key=None),
+                ResizeWithPadOrCropd(keys=["image", "gt", "roi_mask", 'bridge_weight_map'], spatial_size=self.config['patch_size']),
                 GetBinaryLabeld(keys=["gt"], ignore_mask_value=2),
-                EnsureTyped(keys=["image", "gt", "roi_mask"], track_meta=False)
+                EnsureTyped(keys=["image", "gt", "roi_mask", 'bridge_weight_map'], track_meta=False)
             ]
         )
 
@@ -521,8 +533,6 @@ class main_train_STU_Net(BaseTrainer):
         epoch_loss = 0
 
         per_criterio_loss = {}
-        for criterio_name in self.config['criterion']:
-            per_criterio_loss[criterio_name] = 0
         pbar = tqdm(self.train_loader, desc=f"Epoch {epoch}/{self.config['num_epochs']}")
         for idx, batch_dict in enumerate(pbar):
             # Load input vol and gt
@@ -565,8 +575,11 @@ class main_train_STU_Net(BaseTrainer):
             self.scaler.update()
             
             epoch_loss += train_loss.item()
-            for criterio_name in self.config['criterion']:
-                per_criterio_loss[criterio_name] += losses_dict[criterio_name]
+            for criterio_name in losses_dict.keys():
+                if criterio_name in per_criterio_loss:
+                    per_criterio_loss[criterio_name] += losses_dict[criterio_name]
+                else:
+                    per_criterio_loss[criterio_name] = losses_dict[criterio_name]
             pbar.set_postfix({"Loss": train_loss.item()})
         
         if warmup:
@@ -582,7 +595,7 @@ class main_train_STU_Net(BaseTrainer):
         train_avg_loss = epoch_loss / len(self.train_loader)
         print(f"{pre_name} Epoch {epoch} Finished. Avg Loss: {train_avg_loss:.6f}")
         # This will replace each element in the dict with the mean
-        for criterio_name in self.config['criterion']:
+        for criterio_name in losses_dict.keys():
             per_criterio_loss[criterio_name] = per_criterio_loss[criterio_name] / len(self.train_loader)
         return train_avg_loss, per_criterio_loss
     
@@ -590,30 +603,39 @@ class main_train_STU_Net(BaseTrainer):
         """Logic for evaluation. Returns a dictionary of metrics."""
         epoch = kwargs.get('epoch')
         warmup = kwargs.get('warmup')
-
         self.model.eval()
+        
+        # General DSC validation value for quality controll
         val_value_sum = 0
+        epoch_val_loss = 0
+        # Add the per criterio val loss for checking overfitting
+        per_criterio_val_loss = {}
+        for val_criterio_name in self.config['criterion']:
+            per_criterio_val_loss[f"val_{val_criterio_name}"] = 0
 
         pbar = tqdm(self.val_loader, desc=f"Val epoch {epoch}/{self.config['num_epochs']}")
-
         for idx, batch_dict in enumerate(pbar):
             input_patch = batch_dict['image'].to(self.config['device'])
             ground_truth = batch_dict['gt'].to(self.config['device'])
             # Create the mask of the region to compute the loss
             roi_mask = batch_dict['roi_mask'].to(self.config['device'])
+            bridge_weight_map = batch_dict['bridge_weight_map'].to(self.config['device'])
 
-            # --- FP16 FORWARD PASS ---
             with torch.no_grad():
                 # Forward Pass
                 # The model tries to predict the segmentation
                 prediction = self.model(input_patch)
                 # Calculate DSC (Compare Prediction vs. GT)
                 val_value = self.val_metric(pred=prediction, target=ground_truth, roi_mask=roi_mask)
-                
+                # Also compute val losses for logging (no deep supervision here)
+                val_loss, val_losses_dict = self.train_criterion(prediction, ground_truth, roi_mask=roi_mask, bridge_weight_map=bridge_weight_map, deep_supervision_weights=[1.0]) 
                 # commented to avoid overwhelming 
                 #self.wandb_run.log({"val_value": val_value.item()})
 
             val_value_sum += val_value
+            epoch_val_loss += val_loss.item()
+            for val_criterio_name in val_losses_dict.keys():
+                per_criterio_val_loss[f"val_{val_criterio_name}"] += val_losses_dict[f"{val_criterio_name}"]
             pbar.set_postfix({"DSC": val_value})
 
         if epoch%10 == 0:
@@ -630,9 +652,15 @@ class main_train_STU_Net(BaseTrainer):
             self.save_vol(input_patch, join(self.preds_path, f"{pre_name}epoch_{epoch}_input_val.nii.gz"))
             self.save_vol(ground_truth, join(self.preds_path, f"{pre_name}epoch_{epoch}_gt_val.nii.gz"))
 
+        # computing mean of metrics
         val_avg_value = val_value_sum / len(self.val_loader)
-        print(f"Epoch {epoch} with validation avg DSC: {val_avg_value:.6f}")
-        return val_avg_value
+        val_avg_loss = epoch_val_loss / len(self.val_loader)
+
+        for val_criterio_name in val_losses_dict.keys():
+            per_criterio_val_loss[f"val_{val_criterio_name}"] = per_criterio_val_loss[f"val_{val_criterio_name}"] / len(self.val_loader)
+
+        print(f"Epoch {epoch} with validation avg DSC: {val_avg_value:.6f} and avg Loss: {val_avg_loss:.6f}")
+        return val_avg_value, val_avg_loss, per_criterio_val_loss
 
     def _freeze_weights(self, **kwargs):
         """ Logic to freeze the layers that were loaded and unfrozing all randomly initiated """
@@ -812,7 +840,7 @@ class main_train_STU_Net(BaseTrainer):
         best_val_value = self.val_value
         
         # Doing warmup stage
-        if self.config['warmup_epochs'] > 0:
+        if self.config['warmup_epochs'] > 0 and self.config['resume'] is None:
             self.warmup_train()
         
         # Make sure all weights are trainable
@@ -827,7 +855,7 @@ class main_train_STU_Net(BaseTrainer):
                 warmup=False
             )
             # Perform evaluation 
-            val_avg_value = self.val(
+            val_avg_value, val_avg_loss, per_criterio_val_loss = self.val(
                 epoch=self.epoch, 
                 warmup=False
             )
@@ -835,12 +863,22 @@ class main_train_STU_Net(BaseTrainer):
             # Save in wandb
             log_train_data = {
                     "epoch_train": self.epoch,
-                    "train_avg_loss": train_avg_loss,
-                    "val_avg_value": val_avg_value,
+                    "train_total_avg_loss": train_avg_loss,
+                    "val_Dice": val_avg_value,
+                    "val_avg_loss": val_avg_loss,
                     "lr_train": self.optimizer.param_groups[0]['lr'] 
                 }
+            # Add the per criterio losses to wandb
+            train_fullres_loss = 0.0
             for criterio_name in per_criterio_loss.keys():
                 log_train_data[criterio_name] = per_criterio_loss[criterio_name]
+                if criterio_name.endswith("_fullres"):
+                    train_fullres_loss += per_criterio_loss[criterio_name]
+            log_train_data["train_fullres_loss"] = train_fullres_loss # making sure the train and val are comparable
+
+            for val_criterio_name in per_criterio_val_loss.keys():
+                log_train_data[val_criterio_name] = per_criterio_val_loss[val_criterio_name]
+
             self.wandb_run.log(
                 log_train_data
             )

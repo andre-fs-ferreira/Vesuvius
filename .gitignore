@@ -12,3 +12,4 @@ __pycache__/**
 utils/__pycache__/**
 utils/cldice/__pycache__/**
 git_tests/__pycache__/*
+inferences/*
