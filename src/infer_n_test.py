@@ -19,7 +19,7 @@ with open(CONFIG_FILE, "r") as f:
 # 🧪 Initialize Inference Object
 infer_object = VesuviusInferer(config_content)
 
-print(f"🚀 Starting inference on dataset: {config_content['dataset_path']}")
+print(f"🚀 Starting inference on dataset: {config_content['dataset_path_imgs']}")
 print("📋 Using the following configuration:")
 for key, value in config_content.items():
     print(f"  🔹 {key}: {value}")
@@ -27,7 +27,7 @@ for key, value in config_content.items():
 print("=" * 50)
 # 🏃 Run Inference
 infer_object.dataset_inference(
-    dataset_path = config_content["dataset_path"], 
+    dataset_path = config_content["dataset_path_imgs"], 
     pred_save_dir = config_content["pred_save_dir"]
 )
 print("=" * 50)
@@ -36,8 +36,8 @@ print("=" * 50)
 print("🧐 Starting evaluation using VesuviusMetric...")
 
 test_metric_obj = VesuviusMetric(
-    solution_path=f"{config_content['dataset_path_gt']}/test_labels_df.csv",
-    submission_path=f"{config_content['pred_save_dir']}/test_pred_df.csv",
+    solution_path=f"{os.path.join(config_content['dataset_path_gt'], os.path.basename(os.path.normpath(config_content['dataset_path_gt'])) + '_df.csv')}",
+    submission_path=f"{os.path.join(config_content['pred_save_dir'], os.path.basename(os.path.normpath(config_content['pred_save_dir'])) + '_df.csv')}",
     output_file=f"{config_content['pred_save_dir']}/detailed_scores_obj.csv"
 )
 
