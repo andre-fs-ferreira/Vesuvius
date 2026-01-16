@@ -103,6 +103,9 @@ class VesuviusInferer(BaseInfer):
         """Logic for saving predictions to disk."""
         # Ensure tensor is 3D (H, W, D) or (H, W)
         data = torch_tensor.detach().cpu().numpy().astype('uint8')
+        while data.ndim > 3:
+            data = np.squeeze(data, axis=0)
+        data = np.transpose(data, (2, 1, 0))
         
         # If the data is a probability map (0-1), 
         # many Vesuvius tools expect uint16 or uint8
