@@ -767,7 +767,7 @@ class main_train_STU_Net(BaseTrainer):
         self._freeze_weights()
 
         # Take old learning rate (used for pre-training)
-        warm_up_opt = optim.AdamW(self.model.parameters(), lr=pre_train_config['learning_rate'])
+        warm_up_opt = optim.AdamW(filter(lambda p: p.requires_grad, self.model.parameters()), lr=pre_train_config['learning_rate'])
         
         warmup_epoch = 0
 
@@ -780,7 +780,7 @@ class main_train_STU_Net(BaseTrainer):
                 warmup=True
             )
             # Perform evaluation 
-            val_avg_value, val_avg_loss, per_criterio_val_loss = self.val(
+            val_avg_value = self.val(
                 epoch=warmup_epoch, 
                 warmup=True
             ) 
@@ -788,27 +788,17 @@ class main_train_STU_Net(BaseTrainer):
             warmup_log_train_data = {
                     "warmup_epoch": warmup_epoch,
                     "train_avg_loss": train_avg_loss,
-                    "val_Dice": val_avg_value,
-                    "val_avg_loss": val_avg_loss,
+                    "val_avg_value": val_avg_value,
                     "lr": warm_up_opt.param_groups[0]['lr']
                 }
-            # Add the per criterio losses to wandb
-            train_fullres_loss = 0.0
             for criterio_name in per_criterio_loss.keys():
                 warmup_log_train_data[criterio_name] = per_criterio_loss[criterio_name]
-                if criterio_name.endswith("_fullres"):
-                    train_fullres_loss += per_criterio_loss[criterio_name]
-            warmup_log_train_data["train_fullres_loss"] = train_fullres_loss # making sure the train and val are comparable
-
-            for val_criterio_name in per_criterio_val_loss.keys():
-                warmup_log_train_data[val_criterio_name] = per_criterio_val_loss[val_criterio_name]
 
             self.wandb_run.log(
                 warmup_log_train_data
             )
         ## Progressive unfrozening and warmup (for decoder to encoder)  
         ALL_UNFROZEN = False
-        warm_up_opt = optim.AdamW(self.model.parameters(), lr=self.config['learning_rate'])
         while not ALL_UNFROZEN:
             warmup_epoch += 1
             # Unfreeze the next layer
@@ -818,6 +808,7 @@ class main_train_STU_Net(BaseTrainer):
                 print("🏁 Full model unfrozen. Proceeding to main training.")
                 break
             
+            warm_up_opt = optim.AdamW(filter(lambda p: p.requires_grad, self.model.parameters()), lr=self.config['learning_rate'])
             # train one warmup epoch 
             train_avg_loss, per_criterio_loss = self.train_epoch(
                 epoch=warmup_epoch,
@@ -825,7 +816,7 @@ class main_train_STU_Net(BaseTrainer):
                 warmup=True
             )
             # Perform evaluation 
-            val_avg_value, val_avg_loss, per_criterio_val_loss = self.val( # TODO
+            val_avg_value = self.val(
                 epoch=warmup_epoch, 
                 warmup=True
             )
@@ -833,26 +824,15 @@ class main_train_STU_Net(BaseTrainer):
             warmup_log_train_data = {
                     "warmup_epoch": warmup_epoch,
                     "train_avg_loss": train_avg_loss,
-                    "val_Dice": val_avg_value,
-                    "val_avg_loss": val_avg_loss,
+                    "val_avg_value": val_avg_value,
                     "lr": warm_up_opt.param_groups[0]['lr']
                 }
-            
-            # Add the per criterio losses to wandb
-            train_fullres_loss = 0.0
             for criterio_name in per_criterio_loss.keys():
                 warmup_log_train_data[criterio_name] = per_criterio_loss[criterio_name]
-                if criterio_name.endswith("_fullres"):
-                    train_fullres_loss += per_criterio_loss[criterio_name]
-            warmup_log_train_data["train_fullres_loss"] = train_fullres_loss # making sure the train and val are comparable
-
-            for val_criterio_name in per_criterio_val_loss.keys():
-                warmup_log_train_data[val_criterio_name] = per_criterio_val_loss[val_criterio_name]
 
             self.wandb_run.log(
                 warmup_log_train_data
             )
-
         return 0
         
     def train_loop(self, **kwargs):

@@ -1,7 +1,7 @@
 # --- Core Deep Learning & Imaging ---
-torch==2.9.1
-torchaudio==2.9.1
-torchvision==0.24.1
+# torch==2.9.1
+# torchaudio==2.9.1
+# torchvision==0.24.1
 monai==1.5.1
 itk==5.4.5
 simpleitk==2.5.3
