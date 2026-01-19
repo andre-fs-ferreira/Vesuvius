@@ -66,8 +66,7 @@ class main_train_STU_Net(BaseTrainer):
         self.train_criterion = self._set_train_criterion() # DONE
         self.val_metric = self._set_val_metric() # DONE
         self.scheduler = self._set_scheduler() # DONE
-        # TODO uncomment
-        # self.wandb_run = self._set_wandb_checkpoint() # DONE
+        self.wandb_run = self._set_wandb_checkpoint() # DONE
         self.train_loader = self._set_train_dataloader() # DONE
         self.val_loader = self._set_val_dataloader() # DONE
 
