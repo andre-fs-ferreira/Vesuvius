@@ -355,8 +355,8 @@ class main_train_STU_Net(BaseTrainer):
         print(f"Some examples:")
         print(train_cases[:5])
 
-        transforms = Compose(
-            [   
+        # TODO make transforms here!
+        transforms_list = [   
                 # Load image 
                 LoadImaged(keys=["image", 'gt', 'bridge_weight_map']),
                 EnsureChannelFirstd(keys=["image", 'gt', 'bridge_weight_map']),
@@ -373,18 +373,60 @@ class main_train_STU_Net(BaseTrainer):
                 #RandSpatialCropSamplesd(keys=["image", 'gt'], roi_size=self.config['patch_size'], num_samples=1, random_size=False),
                 RandCropByPosNegLabeld(keys=["image", 'gt', 'roi_mask', 'bridge_weight_map'], label_key='roi_mask', spatial_size=self.config['patch_size'], pos=1, neg=0, num_samples=1, image_key=None),
                 ResizeWithPadOrCropd(keys=["image", 'gt', 'bridge_weight_map'], spatial_size=self.config['patch_size'], mode="minimum"),
+        ]
+        if data_augmentation: # TODO
+            # Flipping
+            RandFlipd(keys=["image", 'gt', 'bridge_weight_map'], prob=1)
+            # 2. ELASTIC DEFORMATION
+            # p_elastic_deform=0.3, magnitude=(10, 50)
+            Rand3DElasticd(
+                keys=["image", 'gt', 'bridge_weight_map'],
+                sigma_range=(5, 25),   # Controls "smoothness" of deformation
+                magnitude_range=(10, 50),         # Controls "intensity" (pixels)
+                spatial_size=patch_size_spatial,  # Ensures output size
+                prob=0.3,                         # p_elastic_deform
+                mode=("spline", "nearest", "spline"),     # Bilinear for img, Nearest for seg
+                padding_mode="zeros",
+            ),
 
-                # Create multi-resolution ground truths for deep supervision
-                CopyItemsd(keys=["gt"], times=2, names=["gt_2layer", "gt_3layer"]),
-                Resized(keys=["gt_2layer"], spatial_size=[s // 2 for s in self.config['patch_size']], mode='nearest'),
-                Resized(keys=["gt_3layer"], spatial_size=[s // 4 for s in self.config['patch_size']], mode='nearest'),
-                #roi_mask = ground_truth != 2 -> roi_mask = roi_mask.float()
-                GetROIMaskdd(keys=["gt_2layer", "gt_3layer"], ignore_mask_value=2, new_key_names=["roi_mask_2layer", "roi_mask_3layer"]),
-                GetBinaryLabeld(keys=["gt", "gt_2layer", "gt_3layer"], ignore_mask_value=2),
-                EnsureTyped(keys=["image", "gt",  "gt_2layer", "gt_3layer", "roi_mask", "roi_mask_2layer", "roi_mask_3layer", "bridge_weight_map"], track_meta=False)
-            ]
-        )
+            # 3. ROTATION
+            # p_rotation=0.5, independent rotation on axes
+            RandRotated(
+                keys=["image", "label"],
+                range_x=rotation_for_DA,
+                range_y=rotation_for_DA,
+                range_z=rotation_for_DA,
+                prob=0.5,                         # p_rotation
+                mode=("bilinear", "nearest"),
+                padding_mode="zeros",
+            ),
 
+            # 4. SCALING
+            # p_scaling=0.2, scaling=(0.7, 1.4)
+            # p_synchronize...=1 implies isotropic (same scale for all axes)
+            RandZoomd(
+                keys=["image", "label"],
+                min_zoom=0.7,
+                max_zoom=1.4,
+                prob=0.2,                         # p_scaling
+                keep_size=True,                   # Maintain patch size after zoom
+                mode=("bilinear", "nearest"),
+                padding_mode="constant",          # Fills empty space with 0
+            ),
+        ])
+
+        # END transformations!
+        # Create multi-resolution ground truths for deep supervision
+        transforms_list.append(CopyItemsd(keys=["gt"], times=2, names=["gt_2layer", "gt_3layer"]))
+        transforms_list.append(Resized(keys=["gt_2layer"], spatial_size=[s // 2 for s in self.config['patch_size']], mode='nearest'))
+        transforms_list.append(Resized(keys=["gt_3layer"], spatial_size=[s // 4 for s in self.config['patch_size']], mode='nearest'))
+        #roi_mask = ground_truth != 2 -> roi_mask = roi_mask.float()
+        transforms_list.append(GetROIMaskdd(keys=["gt_2layer", "gt_3layer"], ignore_mask_value=2, new_key_names=["roi_mask_2layer", "roi_mask_3layer"]))
+        transforms_list.append(GetBinaryLabeld(keys=["gt", "gt_2layer", "gt_3layer"], ignore_mask_value=2))
+        transforms_list.append(EnsureTyped(keys=["image", "gt",  "gt_2layer", "gt_3layer", "roi_mask", "roi_mask_2layer", "roi_mask_3layer", "bridge_weight_map"], track_meta=False))
+
+        transforms = Compose(transforms_list)
+        
         print("Initializing Dataset...")
         train_ds = CacheDataset(
             data=data_list, 
@@ -405,6 +447,7 @@ class main_train_STU_Net(BaseTrainer):
         return train_loader
 
     def _set_val_dataloader(self):
+        # TODO make this static, i.e., not random crop!
         data_list = []
         with open(self.config['data_split_json'], "r") as f:
             split = json.load(f)
