@@ -34,7 +34,16 @@ from monai.transforms import (
     EnsureChannelFirstd,
     Resized,
     RandSpatialCropSamplesd,
-    RandCropByPosNegLabeld
+    RandCropByPosNegLabeld,
+    RandFlipd,
+    Rand3DElasticd,
+    RandRotated,
+    RandZoomd,
+    RandAdjustContrastd,
+    RandGaussianNoised,
+    RandGaussianSmoothd,
+    RandScaleIntensityd,
+    RandSimulateLowResolutiond
 )
 
 # Local Project Imports
@@ -57,7 +66,8 @@ class main_train_STU_Net(BaseTrainer):
         self.train_criterion = self._set_train_criterion() # DONE
         self.val_metric = self._set_val_metric() # DONE
         self.scheduler = self._set_scheduler() # DONE
-        self.wandb_run = self._set_wandb_checkpoint() # DONE
+        # TODO uncomment
+        # self.wandb_run = self._set_wandb_checkpoint() # DONE
         self.train_loader = self._set_train_dataloader() # DONE
         self.val_loader = self._set_val_dataloader() # DONE
 
@@ -331,6 +341,117 @@ class main_train_STU_Net(BaseTrainer):
         last_epoch = self.config.get('resume_epoch', 0) - 1 if self.config.get('resume') else -1
         return CosineAnnealingLR(self.optimizer, self.config['num_epochs'], eta_min=0.0, last_epoch=last_epoch)
     
+    def _get_transforms(self):
+        """
+        Composes a list of MONAI-based stochastic data augmentations for 3D medical imaging.
+
+        This method defines a transformation pipeline split into two main phases:
+        1. **Spatial Transforms**: Applied to the 'image', 'gt' (ground truth), and 
+        'bridge_weight_map' to ensure geometric consistency across the data triplet.
+        Includes flipping, elastic deformation, rotation, and zooming.
+        2. **Intensity Transforms**: Applied strictly to the 'image' key to simulate 
+        variations in acquisition noise, resolution, and contrast without altering 
+        the labels.
+
+        Returns:
+            list: A list of MONAI dictionary-based transform objects.
+
+        Note:
+            - Spatial transforms use 'trilinear' interpolation for intensity data and 
+            'nearest' for categorical ground truth masks.
+            - The `Rand3DElasticd` padding mode is currently set to 'zeros'; 
+        """
+        transforms_list = [
+            # --- Spatial Transforms ---
+            
+            # Flips data along axes
+            RandFlipd(
+                keys=["image", 'gt', 'bridge_weight_map'],
+                prob=1
+            ),
+            # Applies smooth, non-linear grid deformation
+            Rand3DElasticd(
+                keys=["image", 'gt', 'bridge_weight_map'],
+                sigma_range=(5, 25),
+                magnitude_range=(10, 50),
+                spatial_size=self.config['patch_size'],
+                prob=0.2,
+                mode=("trilinear", "nearest", "trilinear"),
+                padding_mode="zeros",
+            ),
+            # Rotates data along random axes
+            RandRotated(
+                keys=["image", 'gt', 'bridge_weight_map'],
+                range_x=np.pi,
+                range_y=np.pi,
+                range_z=np.pi,
+                prob=0.5,
+                mode=("trilinear", "nearest", "trilinear"),
+                padding_mode="zeros",
+            ),
+            # Zooms in/out while maintaining patch size
+            RandZoomd(
+                keys=["image", 'gt', 'bridge_weight_map'],
+                min_zoom=0.7,
+                max_zoom=1.4,
+                prob=0.2,
+                keep_size=True,
+                mode=("trilinear", "nearest", "trilinear"),
+                padding_mode="constant",
+            ),
+            
+            # --- Intensity Transforms ---
+            # Adds Gaussian noise to image intensity
+            RandGaussianNoised(
+                keys=["image"],
+                prob=0.2,
+                std=(0.15),
+                mean=0.0
+            ),
+            
+            # Blurs image using Gaussian filter
+            RandGaussianSmoothd(
+                keys=["image"],
+                prob=0.2,
+                sigma_x=(0.5, 1.5),
+                sigma_y=(0.5, 1.5),
+                sigma_z=(0.5, 1.5)
+            ),
+            
+            # Adjusts brightness by multiplying intensity
+            RandScaleIntensityd(
+                keys=["image"],
+                prob=0.2,
+                factors=(-0.5, 0.5)
+            ),
+            
+            # Simulates low resolution by downsampling then upsampling
+            RandSimulateLowResolutiond(
+                keys=["image"],
+                prob=0.2,
+                zoom_range=(0.25, 1.0),
+                downsample_mode="nearest",
+                align_corners=False
+            ),
+            
+            # Non-linear contrast adjustment (inverted image)
+            RandAdjustContrastd(
+                keys=["image"],
+                prob=0.1,
+                gamma=(0.7, 1.5),
+                invert_image=True
+            ),
+            
+            # Non-linear contrast adjustment (standard image)
+            RandAdjustContrastd(
+                keys=["image"],
+                prob=0.1,
+                gamma=(0.7, 1.5),
+                invert_image=False
+            )
+        ]
+        return transforms_list
+    
     def _set_train_dataloader(self):
         """ Getting the list of cases for training and loading using MONAI (all into memory)"""
         data_list = []
@@ -355,7 +476,6 @@ class main_train_STU_Net(BaseTrainer):
         print(f"Some examples:")
         print(train_cases[:5])
 
-        # TODO make transforms here!
         transforms_list = [   
                 # Load image 
                 LoadImaged(keys=["image", 'gt', 'bridge_weight_map']),
@@ -371,57 +491,22 @@ class main_train_STU_Net(BaseTrainer):
                 #ResizeWithPadOrCropd(keys=["image", "gt"], spatial_size=self.config['patch_size']),
                 # Not ResizeWithPadOrCropd -> random crop
                 #RandSpatialCropSamplesd(keys=["image", 'gt'], roi_size=self.config['patch_size'], num_samples=1, random_size=False),
-                RandCropByPosNegLabeld(keys=["image", 'gt', 'roi_mask', 'bridge_weight_map'], label_key='roi_mask', spatial_size=self.config['patch_size'], pos=1, neg=0, num_samples=1, image_key=None),
+                RandCropByPosNegLabeld(keys=["image", 'gt', 'bridge_weight_map'], label_key='roi_mask', spatial_size=self.config['patch_size'], pos=1, neg=0, num_samples=1, image_key=None),
                 ResizeWithPadOrCropd(keys=["image", 'gt', 'bridge_weight_map'], spatial_size=self.config['patch_size'], mode="minimum"),
         ]
-        if data_augmentation: # TODO
-            # Flipping
-            RandFlipd(keys=["image", 'gt', 'bridge_weight_map'], prob=1)
-            # 2. ELASTIC DEFORMATION
-            # p_elastic_deform=0.3, magnitude=(10, 50)
-            Rand3DElasticd(
-                keys=["image", 'gt', 'bridge_weight_map'],
-                sigma_range=(5, 25),   # Controls "smoothness" of deformation
-                magnitude_range=(10, 50),         # Controls "intensity" (pixels)
-                spatial_size=patch_size_spatial,  # Ensures output size
-                prob=0.3,                         # p_elastic_deform
-                mode=("spline", "nearest", "spline"),     # Bilinear for img, Nearest for seg
-                padding_mode="zeros",
-            ),
-
-            # 3. ROTATION
-            # p_rotation=0.5, independent rotation on axes
-            RandRotated(
-                keys=["image", "label"],
-                range_x=rotation_for_DA,
-                range_y=rotation_for_DA,
-                range_z=rotation_for_DA,
-                prob=0.5,                         # p_rotation
-                mode=("bilinear", "nearest"),
-                padding_mode="zeros",
-            ),
-
-            # 4. SCALING
-            # p_scaling=0.2, scaling=(0.7, 1.4)
-            # p_synchronize...=1 implies isotropic (same scale for all axes)
-            RandZoomd(
-                keys=["image", "label"],
-                min_zoom=0.7,
-                max_zoom=1.4,
-                prob=0.2,                         # p_scaling
-                keep_size=True,                   # Maintain patch size after zoom
-                mode=("bilinear", "nearest"),
-                padding_mode="constant",          # Fills empty space with 0
-            ),
-        ])
-
+        
+        if self.config['data_augmentation']:
+            da_transforms_list = self._get_transforms()
+            for da_trans in da_transforms_list:
+                transforms_list.append(da_trans)
+            
         # END transformations!
         # Create multi-resolution ground truths for deep supervision
         transforms_list.append(CopyItemsd(keys=["gt"], times=2, names=["gt_2layer", "gt_3layer"]))
         transforms_list.append(Resized(keys=["gt_2layer"], spatial_size=[s // 2 for s in self.config['patch_size']], mode='nearest'))
         transforms_list.append(Resized(keys=["gt_3layer"], spatial_size=[s // 4 for s in self.config['patch_size']], mode='nearest'))
         #roi_mask = ground_truth != 2 -> roi_mask = roi_mask.float()
-        transforms_list.append(GetROIMaskdd(keys=["gt_2layer", "gt_3layer"], ignore_mask_value=2, new_key_names=["roi_mask_2layer", "roi_mask_3layer"]))
+        transforms_list.append(GetROIMaskdd(keys=["gt", "gt_2layer", "gt_3layer"], ignore_mask_value=2, new_key_names=["roi_mask","roi_mask_2layer", "roi_mask_3layer"]))
         transforms_list.append(GetBinaryLabeld(keys=["gt", "gt_2layer", "gt_3layer"], ignore_mask_value=2))
         transforms_list.append(EnsureTyped(keys=["image", "gt",  "gt_2layer", "gt_3layer", "roi_mask", "roi_mask_2layer", "roi_mask_3layer", "bridge_weight_map"], track_meta=False))
 
