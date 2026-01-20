@@ -531,7 +531,6 @@ class main_train_STU_Net(BaseTrainer):
         return train_loader
 
     def _set_val_dataloader(self):
-        # TODO make this static, i.e., not random crop!
         data_list = []
         with open(self.config['data_split_json'], "r") as f:
             split = json.load(f)
@@ -952,7 +951,7 @@ class main_train_STU_Net(BaseTrainer):
                 warmup=True
             )
             # Perform evaluation 
-            val_avg_value, val_avg_loss, per_criterio_val_loss = self.val( # TODO
+            val_avg_value, val_avg_loss, per_criterio_val_loss = self.val( 
                 epoch=warmup_epoch, 
                 warmup=True
             )
