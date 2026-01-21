@@ -20,7 +20,7 @@
   "data_split_json": "../DataSet/Challenge_dataset_updated/train_val_split.json",
   "train_cache_rate": 0.0,
   "val_cache_rate": 0.0,
-  "data_augmentation": true,
+  "data_augmentation": "safe",
 
   "batch_size": 1,
   "num_workers": 2,
