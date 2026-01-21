@@ -183,15 +183,15 @@ class VesuviusInferer(BaseInfer):
 
         self.model.eval()
         with torch.no_grad():
-            pred = self.sliding_window(inputs=input_image, network=self.model)
-            pred = sigmoid(pred)
+            logits_pred = self.sliding_window(inputs=input_image, network=self.model)
+            pred = sigmoid(logits_pred)
             pred[pred>threshold] = 1.0
             pred[pred<=threshold] = 0.0
 
         if test:
-            return pred
+            return logits_pred, pred
         else:
-            return pred, data['gt'].unsqueeze(0).to(self.config['device']), data['roi_mask'].unsqueeze(0).to(self.config['device']) 
+            return logits_pred, pred, data['gt'].unsqueeze(0).to(self.config['device']), data['roi_mask'].unsqueeze(0).to(self.config['device']) 
 
     def create_dfs(self, path_dir):
         # Generate DataFrame
@@ -213,6 +213,43 @@ class VesuviusInferer(BaseInfer):
         results = self.criterion(predictions, gt, roi_mask)
         return results
     
+    def dataset_inference_save_logits(self, dataset_path, pred_save_dir):
+        """ inference on all cases in a dataset directory and save predictions """
+        os.makedirs(pred_save_dir, exist_ok=True)
+        tif_files = glob.glob(os.path.join(dataset_path, '**/*.tif'), recursive=True)
+        nii_files = glob.glob(os.path.join(dataset_path, '**/*.nii.gz'), recursive=True)
+
+        all_cases = tif_files + nii_files
+
+        print(f"Found cases: {all_cases}")
+        
+        # 🏁 Wrap the list in tqdm for a visual progress bar
+        # 'desc' adds a label to the bar, 'unit' labels each iteration
+        for case in tqdm(all_cases, desc="🌋 Running Vesuvius Inference", unit="vol"):
+            # Optional: you can still print the case, but it might "flicker" the bar. 
+            # Using tqdm.write() keeps the bar at the bottom.
+            # tqdm.write(f"🔍 Processing: {os.path.basename(case)}")
+            
+            input_data = {
+                'image': str(case),
+                'gt': None
+            }
+            
+            logits_pred, pred = self.infer(input_data, test=True)
+            
+            # 💾 Robust filename extraction
+            file_name = os.path.basename(case).replace('.tif', '')
+            file_name = os.path.basename(case).replace('.nii.gz', '')
+            save_path = os.path.join(pred_save_dir, f"{file_name}.nii.gz")
+            
+            self.save_nifti(
+                torch_tensor=logits_pred, 
+                save_path=save_path, 
+                real_file=str(case)
+            )
+
+        print(f"✅ Inference completed. Predictions saved to: {pred_save_dir}")
+
     def dataset_inference(self, dataset_path, pred_save_dir):
         """ inference on all cases in a dataset directory and save predictions """
         os.makedirs(pred_save_dir, exist_ok=True)
@@ -230,7 +267,7 @@ class VesuviusInferer(BaseInfer):
                 'gt': None
             }
             
-            pred = self.infer(input_data, test=True)
+            logits_pred, pred = self.infer(input_data, test=True)
             
             # 💾 Robust filename extraction
             file_name = os.path.basename(case).replace('.tif', '')
