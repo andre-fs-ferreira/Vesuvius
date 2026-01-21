@@ -43,7 +43,8 @@ from monai.transforms import (
     RandGaussianNoised,
     RandGaussianSmoothd,
     RandScaleIntensityd,
-    RandSimulateLowResolutiond
+    RandSimulateLowResolutiond,
+    RandAxisFlipd
 )
 
 # Local Project Imports
@@ -360,95 +361,101 @@ class main_train_STU_Net(BaseTrainer):
             'nearest' for categorical ground truth masks.
             - The `Rand3DElasticd` padding mode is currently set to 'zeros'; 
         """
+        if self.config['data_augmentation'].upper() not in ["ALL", "SAFE"]:
+            raise ValueError(f"Invalid data_augmentation mode: '{self.config['data_augmentation'].upper()}'. Must be 'ALL' or 'SAFE'.")
+        
         transforms_list = [
             # --- Spatial Transforms ---
-            
             # Flips data along axes
-            RandFlipd(
-                keys=["image", 'gt', 'bridge_weight_map'],
-                prob=1
-            ),
-            # Applies smooth, non-linear grid deformation
-            Rand3DElasticd(
-                keys=["image", 'gt', 'bridge_weight_map'],
-                sigma_range=(5, 25),
-                magnitude_range=(10, 50),
-                spatial_size=self.config['patch_size'],
-                prob=0.2,
-                mode=("trilinear", "nearest", "trilinear"),
-                padding_mode="zeros",
-            ),
-            # Rotates data along random axes
-            RandRotated(
-                keys=["image", 'gt', 'bridge_weight_map'],
-                range_x=np.pi,
-                range_y=np.pi,
-                range_z=np.pi,
-                prob=0.5,
-                mode=("trilinear", "nearest", "trilinear"),
-                padding_mode="zeros",
-            ),
-            # Zooms in/out while maintaining patch size
-            RandZoomd(
-                keys=["image", 'gt', 'bridge_weight_map'],
-                min_zoom=0.7,
-                max_zoom=1.4,
-                prob=0.2,
-                keep_size=True,
-                mode=("trilinear", "nearest", "trilinear"),
-                padding_mode="constant",
-            ),
-            
-            # --- Intensity Transforms ---
+            RandFlipd(keys=["image", 'gt', 'bridge_weight_map'], prob=0.5, spatial_axis=0),
+            RandFlipd(keys=["image", 'gt', 'bridge_weight_map'], prob=0.5, spatial_axis=1),
+            RandFlipd(keys=["image", 'gt', 'bridge_weight_map'], prob=0.5, spatial_axis=2),
+        ]
+        
+        if self.config['data_augmentation'].upper() == "ALL":
+                # These are based on https://github.com/ScrollPrize/villa/blob/main/segmentation/models/arch/nnunet/nnunetv2/training/nnUNetTrainer/variants/loss/nnUNetTrainerSkeletonRecall.py
+                # --- Spatial Transforms ---
+                # Applies smooth, non-linear grid deformation
+                transforms_list.append(Rand3DElasticd(
+                    keys=["image", 'gt', 'bridge_weight_map'],
+                    sigma_range=(5, 25),
+                    magnitude_range=(10, 50),
+                    spatial_size=self.config['patch_size'],
+                    prob=0.2,
+                    mode=("trilinear", "nearest", "trilinear"),
+                    padding_mode="zeros",
+                ))
+                # Rotates data along random axes
+                transforms_list.append(RandRotated(
+                    keys=["image", 'gt', 'bridge_weight_map'],
+                    range_x=np.pi,
+                    range_y=np.pi,
+                    range_z=np.pi,
+                    prob=0.5,
+                    mode=("trilinear", "nearest", "trilinear"),
+                    padding_mode="zeros",
+                ))
+                # Zooms in/out while maintaining patch size
+                transforms_list.append(RandZoomd(
+                    keys=["image", 'gt', 'bridge_weight_map'],
+                    min_zoom=0.7,
+                    max_zoom=1.4,
+                    prob=0.2,
+                    keep_size=True,
+                    mode=("trilinear", "nearest", "trilinear"),
+                    padding_mode="constant",
+                ))
+
+                # --- Intensity Transforms ---
+                # Blurs image using Gaussian filter
+                transforms_list.append(RandGaussianSmoothd(
+                        keys=["image"],
+                        prob=0.2,
+                        sigma_x=(0.5, 1.5),
+                        sigma_y=(0.5, 1.5),
+                        sigma_z=(0.5, 1.5)
+                ))
+                # Non-linear contrast adjustment (inverted image)
+                transforms_list.append(RandAdjustContrastd(
+                    keys=["image"],
+                    prob=0.1,
+                    gamma=(0.7, 1.5),
+                    invert_image=True # This is odd (perhaps remove it)
+                ))
+                
+                # Non-linear contrast adjustment (standard image)
+                transforms_list.append(RandAdjustContrastd(
+                    keys=["image"],
+                    prob=0.1,
+                    gamma=(0.7, 1.5),
+                    invert_image=False
+                ))
+
+                # Simulates low resolution by downsampling then upsampling
+                transforms_list.append(RandSimulateLowResolutiond(
+                    keys=["image"],
+                    prob=0.2,
+                    zoom_range=(0.25, 1.0),
+                    downsample_mode="nearest",
+                    align_corners=False
+                ))
+        
+        # --- Intensity Transforms ---
             # Adds Gaussian noise to image intensity
-            RandGaussianNoised(
+        transforms_list.append(RandGaussianNoised(
                 keys=["image"],
                 prob=0.2,
                 std=(0.15),
                 mean=0.0
-            ),
-            
-            # Blurs image using Gaussian filter
-            RandGaussianSmoothd(
-                keys=["image"],
-                prob=0.2,
-                sigma_x=(0.5, 1.5),
-                sigma_y=(0.5, 1.5),
-                sigma_z=(0.5, 1.5)
-            ),
+        ))
             
             # Adjusts brightness by multiplying intensity
-            RandScaleIntensityd(
+        transforms_list.append(RandScaleIntensityd(
                 keys=["image"],
                 prob=0.2,
                 factors=(-0.5, 0.5)
-            ),
-            
-            # Simulates low resolution by downsampling then upsampling
-            RandSimulateLowResolutiond(
-                keys=["image"],
-                prob=0.2,
-                zoom_range=(0.25, 1.0),
-                downsample_mode="nearest",
-                align_corners=False
-            ),
-            
-            # Non-linear contrast adjustment (inverted image)
-            RandAdjustContrastd(
-                keys=["image"],
-                prob=0.1,
-                gamma=(0.7, 1.5),
-                invert_image=True
-            ),
-            
-            # Non-linear contrast adjustment (standard image)
-            RandAdjustContrastd(
-                keys=["image"],
-                prob=0.1,
-                gamma=(0.7, 1.5),
-                invert_image=False
-            )
-        ]
+        ))
+
         return transforms_list
     
     def _set_train_dataloader(self):
@@ -494,7 +501,7 @@ class main_train_STU_Net(BaseTrainer):
                 ResizeWithPadOrCropd(keys=["image", 'gt', 'bridge_weight_map'], spatial_size=self.config['patch_size'], mode="minimum"),
         ]
         
-        if self.config['data_augmentation']:
+        if self.config['data_augmentation'].upper() != "NONE":
             da_transforms_list = self._get_transforms()
             for da_trans in da_transforms_list:
                 transforms_list.append(da_trans)
