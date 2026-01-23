@@ -1,0 +1,16 @@
+{
+  "architecture": "STU-Net",
+  "patch_size": [128, 128, 128],
+  "device": "cuda",
+  "batch_size": 1,
+  "num_workers": 4,
+
+  "infer_overlap": 0.5,
+  "infer_sw_batch_size": 2,
+  "blend_mode": "gaussian",
+
+  "checkpoint_path": "/home/shadowtwin/Desktop/AI_work/Vesuvius_Challenge/Vesuvius/checkpoints/second_step/model_epoch_110.pth",
+  "dataset_path_imgs": "/home/shadowtwin/Desktop/AI_work/Vesuvius_Challenge/Vesuvius/DataSet/small_train/images",
+  "dataset_path_gt": "/home/shadowtwin/Desktop/AI_work/Vesuvius_Challenge/Vesuvius/DataSet/small_train/labels",
+  "pred_save_dir": "/home/shadowtwin/Desktop/AI_work/Vesuvius_Challenge/Vesuvius/DataSet/small_train/pred_seg_logits"
+}
