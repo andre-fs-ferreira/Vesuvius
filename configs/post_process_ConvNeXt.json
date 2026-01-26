@@ -6,7 +6,7 @@
   "num_epochs": 30,
   "patch_size": [320, 320, 320],
   "criterion": ["DSC", "Focal"],
-  "criterion_weights": [1.0, 10.0],
+  "criterion_weights": [1.0, 1.0],
   "labda_seg": 1,
   "lr_scheduler": "CosineAnnealingLR",
   "device": "cuda",
