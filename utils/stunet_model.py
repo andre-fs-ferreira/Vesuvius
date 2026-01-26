@@ -108,9 +108,9 @@ class STUNetReconstruction(nn.Module):
 
 
 class STUNetSegmentation(nn.Module):
-    def __init__(self):
+    def __init__(self, deep_supervision=True):
         super().__init__()
-        
+        self.deep_supervision = deep_supervision
         # --- ENCODER ---
         self.conv_blocks_context = nn.ModuleList([
             nn.Sequential(BasicResBlock(1, 64, stride=1), BasicResBlock(64, 64)),
@@ -139,15 +139,27 @@ class STUNetSegmentation(nn.Module):
         ])
 
         # --- OUTPUT ---
-        self.seg_outputs = nn.ModuleList([
-            #nn.Conv3d(1024, 1, kernel_size=1, stride=1), 
-            #nn.Conv3d(512, 1, kernel_size=1, stride=1), 
-            None, # ignoring the deepest two outputs for memory efficiency
-            None, # not using these outputs for deep supervision
-            nn.Conv3d(256, 1, kernel_size=1, stride=1), 
-            nn.Conv3d(128, 1, kernel_size=1, stride=1),
-            nn.Conv3d(64, 1, kernel_size=1, stride=1) 
-        ])
+        if deep_supervision:
+            print(f"DOING DEEP SUPERVISION!")
+            self.seg_outputs = nn.ModuleList([
+                #nn.Conv3d(1024, 1, kernel_size=1, stride=1), 
+                #nn.Conv3d(512, 1, kernel_size=1, stride=1), 
+                None, # ignoring the deepest two outputs for memory efficiency
+                None, # not using these outputs for deep supervision
+                nn.Conv3d(256, 1, kernel_size=1, stride=1), 
+                nn.Conv3d(128, 1, kernel_size=1, stride=1),
+                nn.Conv3d(64, 1, kernel_size=1, stride=1) 
+            ])
+        else:
+            self.seg_outputs = nn.ModuleList([
+                #nn.Conv3d(1024, 1, kernel_size=1, stride=1), 
+                #nn.Conv3d(512, 1, kernel_size=1, stride=1), 
+                None, # ignoring the deepest two outputs for memory efficiency
+                None, # not using these outputs for deep supervision
+                None, 
+                None,
+                nn.Conv3d(64, 1, kernel_size=1, stride=1) 
+            ])
 
     def forward(self, x):
         skips = []
@@ -164,9 +176,10 @@ class STUNetSegmentation(nn.Module):
                 x = torch.nn.functional.interpolate(x, size=skip.shape[2:], mode='nearest')
             x = torch.cat((x, skip), dim=1)
             x = self.conv_blocks_localization[i](x)
-            if i>=2:  # Start collecting predictions from the 3rd decoder block
+            if i>=2 and self.deep_supervision:  # Start collecting predictions from the 3rd decoder block
                 deep_supervision_preds.append(self.seg_outputs[i](x))
-
+        if not self.deep_supervision:
+            deep_supervision_preds.append(self.seg_outputs[-1](x))
         if self.training:
             # Return all scales for Deep Supervision Loss
             # index 0 = low res, index -1 = high res
