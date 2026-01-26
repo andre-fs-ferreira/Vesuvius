@@ -4,27 +4,28 @@
   "training_step": "second",
   "warmup_epochs": 0,
   "pre_train_config": "../configs/pre_training.json",
-  "learning_rate": 0.00005,
+  "learning_rate": 0.0001,
   "num_epochs": 500,
   "patch_size": [128, 128, 128],
-  "criterion": ["BCE", "DSC"],
+  "deep_supervision": false,
+  "criterion": ["Focal", "Tversky"],
   "criterion_weights": [1.0, 1.0],
   "lr_scheduler": "CosineAnnealingLR",
   "device": "cuda",
 
   "save_dir": "../checkpoints/second_step",
-  "checkpoint_path": "/mounts/disk4_tiago_e_andre/vesuvius/Vesuvius/checkpoints/second_step/wandb/run-20260119_195812-6mo0e0pg/files/model/model_epoch_200.pth",
+  "checkpoint_path": "/mounts/disk4_tiago_e_andre/vesuvius/Vesuvius/checkpoints/second_step/wandb/run-20260125_232529-opj0vvjm/files/model/model_epoch_80.pth",
   "vol_data_path": "../DataSet/Challenge_dataset_updated/train_images_nii_crop",
   "label_data_path": "../DataSet/Challenge_dataset_updated/train_labels_nii_crop",
   "bridge_weight_map_path": "../DataSet/Challenge_dataset_updated/train_bridge_weight_map_crop",
   "data_split_json": "../DataSet/Challenge_dataset_updated/train_val_split.json",
-  "train_cache_rate": 0.5,
+  "train_cache_rate": 0.4,
   "val_cache_rate": 1.0,
   "data_augmentation": "safe",
 
   "batch_size": 2,
   "num_workers": 4,
 
-  "resume": "/mounts/disk4_tiago_e_andre/vesuvius/Vesuvius/checkpoints/second_step/wandb/run-20260123_000717-skipkn6m/files/model/model_epoch_20.pth",
+  "resume": null,
   "debug": false
 }
