@@ -111,7 +111,7 @@ class main_train_STU_Net(BaseTrainer):
         print(f"Loading weights from: {self.config['checkpoint_path']}")
         
         # Initialize the new Segmentation Model (1 output channels)
-        model = STUNetSegmentation()
+        model = STUNetSegmentation(self.config['deep_supervision'])
         model_state_dict = model.state_dict()
         
         # Load the Reconstruction Weights (1 output channel)
@@ -505,16 +505,20 @@ class main_train_STU_Net(BaseTrainer):
             da_transforms_list = self._get_transforms()
             for da_trans in da_transforms_list:
                 transforms_list.append(da_trans)
-            
         # END transformations!
-        # Create multi-resolution ground truths for deep supervision
-        transforms_list.append(CopyItemsd(keys=["gt"], times=2, names=["gt_2layer", "gt_3layer"]))
-        transforms_list.append(Resized(keys=["gt_2layer"], spatial_size=[s // 2 for s in self.config['patch_size']], mode='nearest'))
-        transforms_list.append(Resized(keys=["gt_3layer"], spatial_size=[s // 4 for s in self.config['patch_size']], mode='nearest'))
-        #roi_mask = ground_truth != 2 -> roi_mask = roi_mask.float()
-        transforms_list.append(GetROIMaskdd(keys=["gt", "gt_2layer", "gt_3layer"], ignore_mask_value=2, new_key_names=["roi_mask","roi_mask_2layer", "roi_mask_3layer"]))
-        transforms_list.append(GetBinaryLabeld(keys=["gt", "gt_2layer", "gt_3layer"], ignore_mask_value=2))
-        transforms_list.append(EnsureTyped(keys=["image", "gt",  "gt_2layer", "gt_3layer", "roi_mask", "roi_mask_2layer", "roi_mask_3layer", "bridge_weight_map"], track_meta=False))
+        if self.config['deep_supervision']:
+            # Create multi-resolution ground truths for deep supervision
+            transforms_list.append(CopyItemsd(keys=["gt"], times=2, names=["gt_2layer", "gt_3layer"]))
+            transforms_list.append(Resized(keys=["gt_2layer"], spatial_size=[s // 2 for s in self.config['patch_size']], mode='nearest'))
+            transforms_list.append(Resized(keys=["gt_3layer"], spatial_size=[s // 4 for s in self.config['patch_size']], mode='nearest'))
+            #roi_mask = ground_truth != 2 -> roi_mask = roi_mask.float()
+            transforms_list.append(GetROIMaskdd(keys=["gt", "gt_2layer", "gt_3layer"], ignore_mask_value=2, new_key_names=["roi_mask","roi_mask_2layer", "roi_mask_3layer"]))
+            transforms_list.append(GetBinaryLabeld(keys=["gt", "gt_2layer", "gt_3layer"], ignore_mask_value=2))
+            transforms_list.append(EnsureTyped(keys=["image", "gt",  "gt_2layer", "gt_3layer", "roi_mask", "roi_mask_2layer", "roi_mask_3layer", "bridge_weight_map"], track_meta=False))
+        else:    
+            transforms_list.append(GetROIMaskdd(keys=["gt"], ignore_mask_value=2, new_key_names=["roi_mask"]))
+            transforms_list.append(GetBinaryLabeld(keys=["gt"], ignore_mask_value=2))
+            transforms_list.append(EnsureTyped(keys=["image", "gt", "roi_mask", "bridge_weight_map"], track_meta=False))
 
         transforms = Compose(transforms_list)
         
@@ -670,17 +674,26 @@ class main_train_STU_Net(BaseTrainer):
         for idx, batch_dict in enumerate(pbar):
             # Load input vol and gt
             input_patch = batch_dict['image'].to(self.config['device'])
-            ground_truth = [
-                batch_dict['gt_3layer'].to(self.config['device']),
-                batch_dict['gt_2layer'].to(self.config['device']),
-                batch_dict['gt'].to(self.config['device'])
-            ]
-            # Mask of the region to compute the loss
-            roi_mask = [
-                batch_dict['roi_mask_3layer'].to(self.config['device']),
-                batch_dict['roi_mask_2layer'].to(self.config['device']),
-                batch_dict['roi_mask'].to(self.config['device'])
-            ]
+            if self.config['deep_supervision']:
+                ground_truth = [
+                    batch_dict['gt_3layer'].to(self.config['device']),
+                    batch_dict['gt_2layer'].to(self.config['device']),
+                    batch_dict['gt'].to(self.config['device'])
+                ]
+                # Mask of the region to compute the loss
+                roi_mask = [
+                    batch_dict['roi_mask_3layer'].to(self.config['device']),
+                    batch_dict['roi_mask_2layer'].to(self.config['device']),
+                    batch_dict['roi_mask'].to(self.config['device'])
+                ]
+            else:
+                ground_truth = [
+                    batch_dict['gt'].to(self.config['device'])
+                ]
+                # Mask of the region to compute the loss
+                roi_mask = [
+                    batch_dict['roi_mask'].to(self.config['device'])
+                ]
              # pre-computed weight map to penalize bridges - set None for on-fly computation
             bridge_weight_map = batch_dict['bridge_weight_map'].to(self.config['device'])
             optimizer.zero_grad()
@@ -693,7 +706,7 @@ class main_train_STU_Net(BaseTrainer):
 
                 # Calculate Loss (Compare Prediction vs. GT)
                 # prediction, target and roi_mask should be a list of 3 tensors
-                train_loss, losses_dict = self.train_criterion(prediction, ground_truth, roi_mask=roi_mask, bridge_weight_map=bridge_weight_map) 
+                train_loss, losses_dict = self.train_criterion(prediction, ground_truth, roi_mask=roi_mask, bridge_weight_map=bridge_weight_map, deep_supervision_weights=[1.0]) 
 
                 # commented to avoid overwhelming 
                 #losses_dict["train_loss"] = train_loss.item()
