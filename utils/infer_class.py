@@ -48,7 +48,7 @@ class VesuviusInferer(BaseInfer):
         print(f"Loading weights from: {self.config['checkpoint_path']}")
         
         # Initialize the new Segmentation Model (1 output channels)
-        model = STUNetSegmentation()
+        model = STUNetSegmentation(self.config['deep_supervision'], activation=self.config['activation'])
         
         # Load trained Weights (1 output channel)
         checkpoint_state_dict = torch.load(self.config['checkpoint_path'], map_location='cpu')
@@ -182,16 +182,29 @@ class VesuviusInferer(BaseInfer):
         input_image = data['image'].unsqueeze(0).to(self.config['device'])
 
         self.model.eval()
-        with torch.no_grad():
-            logits_pred = self.sliding_window(inputs=input_image, network=self.model)
-            pred = sigmoid(logits_pred)
-            pred[pred>threshold] = 1.0
-            pred[pred<=threshold] = 0.0
+        if self.config['activation']:
+            with torch.no_grad():
+                pred = self.sliding_window(inputs=input_image, network=self.model)
+                #pred = sigmoid(logits_pred)
+                pred[pred>threshold] = 1.0
+                pred[pred<=threshold] = 0.0
+        else:
+            with torch.no_grad():
+                logits_pred = self.sliding_window(inputs=input_image, network=self.model)
+                pred = sigmoid(logits_pred)
+                pred[pred>threshold] = 1.0
+                pred[pred<=threshold] = 0.0
 
         if test:
-            return logits_pred, pred
+            if self.config['activation']:
+                return None, pred
+            else:
+                return logits_pred, pred
         else:
-            return logits_pred, pred, data['gt'].unsqueeze(0).to(self.config['device']), data['roi_mask'].unsqueeze(0).to(self.config['device']) 
+            if self.config['activation']:
+                return pred, data['gt'].unsqueeze(0).to(self.config['device']), data['roi_mask'].unsqueeze(0).to(self.config['device']) 
+            else:
+                return logits_pred, pred, data['gt'].unsqueeze(0).to(self.config['device']), data['roi_mask'].unsqueeze(0).to(self.config['device']) 
 
     def create_dfs(self, path_dir):
         # Generate DataFrame

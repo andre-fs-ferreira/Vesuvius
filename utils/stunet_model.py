@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+from torch.nn.functional import sigmoid
 
 class BasicResBlock(nn.Module):
     def __init__(self, in_c, out_c, stride=1):
@@ -108,9 +109,10 @@ class STUNetReconstruction(nn.Module):
 
 
 class STUNetSegmentation(nn.Module):
-    def __init__(self, deep_supervision=True):
+    def __init__(self, deep_supervision=True, activation=False):
         super().__init__()
         self.deep_supervision = deep_supervision
+        self.activation = activation
         # --- ENCODER ---
         self.conv_blocks_context = nn.ModuleList([
             nn.Sequential(BasicResBlock(1, 64, stride=1), BasicResBlock(64, 64)),
@@ -186,7 +188,10 @@ class STUNetSegmentation(nn.Module):
             return deep_supervision_preds
         else:
             # Return only the final high-res prediction for validation/inference
-            return deep_supervision_preds[-1]
+            if self.activation:
+                return sigmoid(deep_supervision_preds[-1])
+            else:
+                return deep_supervision_preds[-1]
 
 if __name__ == "__main__":
     model = STUNetSegmentation()
