@@ -190,8 +190,8 @@ class main_train_STU_Net(BaseTrainer):
                 include_background=True,
                 sigmoid=False, # Sigmoid must be applied before masking
                 softmax=False, 
-                alpha=0.7, # Trying to reduce bridges
-                beta=0.3, 
+                alpha=0.3, # Trying to reduce bridges
+                beta=0.7, # trying to reduce background  
                 batch=True
             ),
             'Focal': FocalLoss(
@@ -203,8 +203,8 @@ class main_train_STU_Net(BaseTrainer):
                 reduction="none"
             ),
             'CLDICE': soft_cldice( # not use in Deep Supervision
-                iter_=10, 
-                smooth=1e-5, 
+                iter_=3, 
+                smooth=1, 
                 exclude_background=False
             ),
             'AntiBridge': AntiBridgeLoss( # not use in Deep Supervision
