@@ -76,7 +76,8 @@ class TestDataLoaderContent(unittest.TestCase):
             'train_cache_rate': 0.0,
             'val_cache_rate': 0.0, 
             'debug': False,
-            'data_augmentation': "All"
+            'data_augmentation': "All",
+            'deep_supervision': False
         }
 
     def tearDown(self):
