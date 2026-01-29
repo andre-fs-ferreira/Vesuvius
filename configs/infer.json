@@ -1,16 +1,27 @@
 {
   "architecture": "STU-Net",
-  "patch_size": [64, 64, 64],
+  "patch_size": [128, 128, 128],
   "device": "cuda",
   "batch_size": 1,
-  "num_workers": 8,
+  "num_workers": 4,
 
-  "infer_overlap": 0.5,
-  "infer_sw_batch_size": 4,
+  "infer_sw_batch_size": 2,
   "blend_mode": "gaussian",
+  "deep_supervision": false,
+  "activation": true,
 
-  "checkpoint_path": "/home/shadowtwin/Desktop/AI_work/Vesuvius_Challenge/Vesuvius/checkpoints/second_step/wandb/run-20260117_005938-u6xvr5hu/files/model/model_best.pth",
+  "overlap_list": [0.5, 0.6, 0.7, 0.8],
+  "TTA_list": [true, false],
+  "TH_list": [0.4, 0.5, 0.6, 0.7, 0.75],
+
+  "checkpoint_paths": [
+    "/home/shadowtwin/Desktop/AI_work/Vesuvius_Challenge/Vesuvius/checkpoints/second_step/Focal_Tversky_DAsafe/model_epoch_150.pth", 
+    "/home/shadowtwin/Desktop/AI_work/Vesuvius_Challenge/Vesuvius/checkpoints/second_step/Focal_Tversky_DAsafe/model_epoch_160.pth",
+    "/home/shadowtwin/Desktop/AI_work/Vesuvius_Challenge/Vesuvius/checkpoints/second_step/Focal_Tversky_DAsafe/model_epoch_40.pth",
+    "/home/shadowtwin/Desktop/AI_work/Vesuvius_Challenge/Vesuvius/checkpoints/second_step/BCE_DSC_DAsafe/model_epoch_80.pth",
+    "/home/shadowtwin/Desktop/AI_work/Vesuvius_Challenge/Vesuvius/checkpoints/second_step/BCE_DSC_DAall/model_epoch_200.pth"
+  ],
   "dataset_path_imgs": "/home/shadowtwin/Desktop/AI_work/Vesuvius_Challenge/Vesuvius/DataSet/val_images",
   "dataset_path_gt": "/home/shadowtwin/Desktop/AI_work/Vesuvius_Challenge/Vesuvius/DataSet/val_labels",
-  "pred_save_dir": "/home/shadowtwin/Desktop/AI_work/Vesuvius_Challenge/Vesuvius/inferences/test_infer_second_step_DSC"
+  "root_pred_save_dir": "/home/shadowtwin/Desktop/AI_work/Vesuvius_Challenge/Vesuvius/inferences/"
 }

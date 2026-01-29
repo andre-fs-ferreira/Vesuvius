@@ -33,6 +33,7 @@ import os
 import glob
 import pandas as pd
 from tqdm import tqdm  # 🚀 Import tqdm
+import itertools
 
 class VesuviusInferer(BaseInfer):
     def __init__(self, config):
@@ -42,6 +43,9 @@ class VesuviusInferer(BaseInfer):
         self.val_transforms = self._set_val_transforms()
         self.test_transforms = self._set_test_transforms()
         self.sliding_window = self._set_sliding_window_inferer()
+
+        self.axes_combinations = self._define_flip_tta(spatial_dims=(2, 3, 4))
+        
 
     def _build_model(self):
         """Initialize the neural network architecture. Load pretrained weights if necessary."""
@@ -171,9 +175,14 @@ class VesuviusInferer(BaseInfer):
 
         return inferer
 
+    def _define_flip_tta(self, spatial_dims=(2, 3, 4)):
+        axes_combinations = []
+        for i in range(len(spatial_dims) + 1):
+            axes_combinations.extend(itertools.combinations(spatial_dims, i))
+        return axes_combinations
+            
     def infer(self, input, test=False, threshold=0.5, **kwargs):
         """Logic for inference. Returns predictions."""
-
         if test:
             data = self.load_input_data(file_dict=input, transforms=self.test_transforms)
         else:
@@ -182,29 +191,67 @@ class VesuviusInferer(BaseInfer):
         input_image = data['image'].unsqueeze(0).to(self.config['device'])
 
         self.model.eval()
-        if self.config['activation']:
-            with torch.no_grad():
-                pred = self.sliding_window(inputs=input_image, network=self.model)
-                #pred = sigmoid(logits_pred)
-                pred[pred>threshold] = 1.0
-                pred[pred<=threshold] = 0.0
+        
+        # TTA
+        if self.config["TTA"]:
+            print(f"Doing inference to these axes combinations:")
+            print(self.axes_combinations)
+            all_predictions = []
+            all_logits_pred = []
+            for axes in self.axes_combinations:
+                print(f"Doing axes: {axes}")
+                if axes:
+                    # torch.flip requires a tuple of dims
+                    aug_input = torch.flip(input_image, dims=axes)
+                else:
+                    aug_input = input_image  # Original image
+
+                with torch.no_grad():
+                    if self.config['activation']:
+                        prediction = self.sliding_window(inputs=aug_input, network=self.model)
+                    else: # in case sigmoid is not applied in the end of the network (recommended to be True!)
+                        logits_pred = self.sliding_window(inputs=aug_input, network=self.model)
+                        prediction = sigmoid(logits_pred)
+                
+                # revert flip
+                if axes:
+                    pred_prob_aligned = torch.flip(prediction, dims=axes)
+                    if not self.config['activation']:
+                        logits_pred = torch.flip(logits_pred, dims=axes)
+                else:
+                    pred_prob_aligned = prediction
+
+                all_predictions.append(pred_prob_aligned)
+                if not self.config['activation']:
+                    all_logits_pred.append(logits_pred)
+
+            final_pred = torch.stack(all_predictions).mean(dim=0)
+            if not self.config['activation']:
+                all_logits_pred = torch.stack(all_logits_pred).mean(dim=0)
+                
         else:
-            with torch.no_grad():
-                logits_pred = self.sliding_window(inputs=input_image, network=self.model)
-                pred = sigmoid(logits_pred)
-                pred[pred>threshold] = 1.0
-                pred[pred<=threshold] = 0.0
+            if self.config['activation']:
+                with torch.no_grad():
+                    final_pred = self.sliding_window(inputs=input_image, network=self.model)
+            else:
+                with torch.no_grad():
+                    logits_pred = self.sliding_window(inputs=input_image, network=self.model)
+                    final_pred = sigmoid(logits_pred)
+                    all_logits_pred = logits_pred
+        # Binary seg
+        final_pred[final_pred>threshold] = 1.0
+        final_pred[final_pred<=threshold] = 0.0
 
         if test:
             if self.config['activation']:
-                return None, pred
+                return None, final_pred
             else:
-                return logits_pred, pred
+                return all_logits_pred, final_pred
         else:
             if self.config['activation']:
-                return pred, data['gt'].unsqueeze(0).to(self.config['device']), data['roi_mask'].unsqueeze(0).to(self.config['device']) 
+                return final_pred, data['gt'].unsqueeze(0).to(self.config['device']), data['roi_mask'].unsqueeze(0).to(self.config['device']) 
             else:
-                return logits_pred, pred, data['gt'].unsqueeze(0).to(self.config['device']), data['roi_mask'].unsqueeze(0).to(self.config['device']) 
+                return all_logits_pred, final_pred, data['gt'].unsqueeze(0).to(self.config['device']), data['roi_mask'].unsqueeze(0).to(self.config['device']) 
 
     def create_dfs(self, path_dir):
         # Generate DataFrame
@@ -279,12 +326,15 @@ class VesuviusInferer(BaseInfer):
                 'image': str(case),
                 'gt': None
             }
-            
-            logits_pred, pred = self.infer(input_data, test=True)
-            
+
             # 💾 Robust filename extraction
             file_name = os.path.basename(case).replace('.tif', '')
             save_path = os.path.join(pred_save_dir, f"{file_name}.tif")
+            if os.path.isfile(save_path):
+                print(f"Case already predicted: {save_path}")
+            else:
+                # Inference
+                logits_pred, pred = self.infer(input_data, test=True, threshold=self.config["TH"])
             
             self.save_tiff(
                 torch_tensor=pred, 
