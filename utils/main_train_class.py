@@ -116,6 +116,7 @@ class main_train_STU_Net(BaseTrainer):
         
         # Load the Reconstruction Weights (1 output channel)
         checkpoint_state_dict = torch.load(self.config['checkpoint_path'], map_location='cpu')
+        print(f"Checkpoint from epoch: {checkpoint_state_dict['epoch']}")
         checkpoint_state_dict = checkpoint_state_dict['model_weights']
         
         # Filter and Log
