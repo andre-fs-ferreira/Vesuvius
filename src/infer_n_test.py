@@ -71,12 +71,14 @@ for checkpoint_path in config_content['checkpoint_paths']:
 
                 # 📊 Evaluation Phase
                 print("🧐 Starting evaluation using VesuviusMetric...")
+                if os.path.exists(f"{config_content['pred_save_dir']}/{csv_name}"):
+                    pass
+                else:
+                    test_metric_obj = VesuviusMetric(
+                        solution_path=f"{os.path.join(config_content['dataset_path_gt'], os.path.basename(os.path.normpath(config_content['dataset_path_gt'])) + '_df.csv')}",
+                        submission_path=f"{os.path.join(config_content['pred_save_dir'], os.path.basename(os.path.normpath(config_content['pred_save_dir'])) + '_df.csv')}",
+                        output_file=f"{config_content['pred_save_dir']}/{csv_name}"
+                    )
 
-                test_metric_obj = VesuviusMetric(
-                    solution_path=f"{os.path.join(config_content['dataset_path_gt'], os.path.basename(os.path.normpath(config_content['dataset_path_gt'])) + '_df.csv')}",
-                    submission_path=f"{os.path.join(config_content['pred_save_dir'], os.path.basename(os.path.normpath(config_content['pred_save_dir'])) + '_df.csv')}",
-                    output_file=f"{config_content['pred_save_dir']}/{csv_name}"
-                )
-
-                test_metric_obj._run()
+                    test_metric_obj._run()
                 print("🎉 Evaluation completed. Results saved! 🏆")

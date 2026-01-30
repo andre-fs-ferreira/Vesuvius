@@ -34,6 +34,7 @@ import glob
 import pandas as pd
 from tqdm import tqdm  # 🚀 Import tqdm
 import itertools
+from torch.amp import autocast
 
 class VesuviusInferer(BaseInfer):
     def __init__(self, config):
@@ -207,12 +208,12 @@ class VesuviusInferer(BaseInfer):
                     aug_input = input_image  # Original image
 
                 with torch.no_grad():
-                    if self.config['activation']:
-                        prediction = self.sliding_window(inputs=aug_input, network=self.model)
-                    else: # in case sigmoid is not applied in the end of the network (recommended to be True!)
-                        logits_pred = self.sliding_window(inputs=aug_input, network=self.model)
-                        prediction = sigmoid(logits_pred)
-                
+                        if self.config['activation']:
+                            prediction = self.sliding_window(inputs=aug_input, network=self.model)
+                        else: # in case sigmoid is not applied in the end of the network (recommended to be True!)
+                            logits_pred = self.sliding_window(inputs=aug_input, network=self.model)
+                            prediction = sigmoid(logits_pred)
+                    
                 # revert flip
                 if axes:
                     pred_prob_aligned = torch.flip(prediction, dims=axes)
@@ -231,13 +232,15 @@ class VesuviusInferer(BaseInfer):
                 
         else:
             if self.config['activation']:
-                with torch.no_grad():
-                    final_pred = self.sliding_window(inputs=input_image, network=self.model)
+                
+                    with torch.no_grad():
+                        final_pred = self.sliding_window(inputs=input_image, network=self.model)
             else:
                 with torch.no_grad():
-                    logits_pred = self.sliding_window(inputs=input_image, network=self.model)
-                    final_pred = sigmoid(logits_pred)
-                    all_logits_pred = logits_pred
+                    
+                        logits_pred = self.sliding_window(inputs=input_image, network=self.model)
+                        final_pred = sigmoid(logits_pred)
+                        all_logits_pred = logits_pred
         # Binary seg
         final_pred[final_pred>threshold] = 1.0
         final_pred[final_pred<=threshold] = 0.0
@@ -336,10 +339,10 @@ class VesuviusInferer(BaseInfer):
                 # Inference
                 logits_pred, pred = self.infer(input_data, test=True, threshold=self.config["TH"])
             
-            self.save_tiff(
-                torch_tensor=pred, 
-                save_path=save_path
-            )
+                self.save_tiff(
+                    torch_tensor=pred, 
+                    save_path=save_path
+                )
 
         # 📊 Creating the dataframe for testing
         print("\n📝 Generating submission dataframes...")
