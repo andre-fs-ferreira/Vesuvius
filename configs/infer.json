@@ -10,16 +10,18 @@
   "deep_supervision": false,
   "activation": true,
 
-  "overlap_list": [0.5, 0.6, 0.7, 0.8],
+  "overlap_list": [0.5, 0.6],
   "TTA_list": [true, false],
-  "TH_list": [0.4, 0.5, 0.6, 0.7, 0.75],
+  "TH_list": [0.4, 0.5, 0.6],
 
   "checkpoint_paths": [
+    "/home/shadowtwin/Desktop/AI_work/Vesuvius_Challenge/Vesuvius/checkpoints/second_step/Focal_Tversky_DAsafe/model_best.pth",
+     "/home/shadowtwin/Desktop/AI_work/Vesuvius_Challenge/Vesuvius/checkpoints/second_step/BCE_DSC_DAsafe/model_epoch_80.pth",
+    "/home/shadowtwin/Desktop/AI_work/Vesuvius_Challenge/Vesuvius/checkpoints/second_step/BCE_DSC_DAall/model_epoch_200.pth",
     "/home/shadowtwin/Desktop/AI_work/Vesuvius_Challenge/Vesuvius/checkpoints/second_step/Focal_Tversky_DAsafe/model_epoch_150.pth", 
     "/home/shadowtwin/Desktop/AI_work/Vesuvius_Challenge/Vesuvius/checkpoints/second_step/Focal_Tversky_DAsafe/model_epoch_160.pth",
-    "/home/shadowtwin/Desktop/AI_work/Vesuvius_Challenge/Vesuvius/checkpoints/second_step/Focal_Tversky_DAsafe/model_epoch_40.pth",
-    "/home/shadowtwin/Desktop/AI_work/Vesuvius_Challenge/Vesuvius/checkpoints/second_step/BCE_DSC_DAsafe/model_epoch_80.pth",
-    "/home/shadowtwin/Desktop/AI_work/Vesuvius_Challenge/Vesuvius/checkpoints/second_step/BCE_DSC_DAall/model_epoch_200.pth"
+    "/home/shadowtwin/Desktop/AI_work/Vesuvius_Challenge/Vesuvius/checkpoints/second_step/Focal_Tversky_DAsafe/model_epoch_40.pth"
+   
   ],
   "dataset_path_imgs": "/home/shadowtwin/Desktop/AI_work/Vesuvius_Challenge/Vesuvius/DataSet/val_images",
   "dataset_path_gt": "/home/shadowtwin/Desktop/AI_work/Vesuvius_Challenge/Vesuvius/DataSet/val_labels",

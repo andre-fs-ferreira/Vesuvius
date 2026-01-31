@@ -45,7 +45,7 @@ class VesuviusInferer(BaseInfer):
         self.test_transforms = self._set_test_transforms()
         self.sliding_window = self._set_sliding_window_inferer()
 
-        self.axes_combinations = self._define_flip_tta(spatial_dims=(2, 3, 4))
+        self.axes_combinations = self._define_flip_tta(spatial_dims=(3, 4))
         
 
     def _build_model(self):
