@@ -32,20 +32,20 @@ with open(CONFIG_FILE, "r") as f:
 tta_list = config_content['TTA_list']
 overlap_list = config_content['overlap_list']
 th_list = config_content['TH_list']
+for tta in tta_list:
+    config_content['TTA'] = tta # tta and no tta
+    if tta:
+        tta_str = "TTA"
+    else:
+        tta_str = "no_TTA"
+    for checkpoint_path in config_content['checkpoint_paths']:
+        print(f"Using checkpoint weights {checkpoint_path}")
+        config_content['checkpoint_path'] = checkpoint_path
 
-for checkpoint_path in config_content['checkpoint_paths']:
-    print(f"Using checkpoint weights {checkpoint_path}")
-    config_content['checkpoint_path'] = checkpoint_path
-
-    model_name_str = checkpoint_path.split('/')[-2]
-    epoch = checkpoint_path.split('/')[-1].split('epoch_')[-1].split('.pth')[0]
+        model_name_str = checkpoint_path.split('/')[-2]
+        epoch = checkpoint_path.split('/')[-1].split('epoch_')[-1].split('.pth')[0]
+        
     
-    for tta in tta_list:
-        config_content['TTA'] = tta # tta and no tta
-        if tta:
-            tta_str = "TTA"
-        else:
-            tta_str = "no_TTA"
         for overlap in overlap_list:
             config_content['infer_overlap'] = overlap # overlap between windows
             for th in th_list:
