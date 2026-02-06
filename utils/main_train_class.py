@@ -6,6 +6,7 @@ from os.path import join
 import sys
 
 import json
+import math
 
 # Third-Party Library Imports
 import numpy as np
@@ -15,7 +16,7 @@ from torch.nn.functional import sigmoid, binary_cross_entropy_with_logits
 import nibabel as nib
 import wandb
 from tqdm import tqdm
-from torch.optim.lr_scheduler import CosineAnnealingLR
+from torch.optim.lr_scheduler import CosineAnnealingLR, LambdaLR
 from torch.amp import autocast, GradScaler
 
 # MONAI Specific Imports
@@ -54,6 +55,7 @@ from stunet_model import STUNetSegmentation # We want to seg now -> Last layer i
 sys.path.append(os.path.abspath("../utils"))
 
 from cldice.cldice import soft_cldice
+from monai_cldice import BCESoftDiceclDiceLoss
 from AntiBridgeLoss import AntiBridgeLoss
 from mask_utils import GetROIMaskdd, GetBinaryLabeld
 
@@ -191,8 +193,8 @@ class main_train_STU_Net(BaseTrainer):
                 include_background=True,
                 sigmoid=False, # Sigmoid must be applied before masking
                 softmax=False, 
-                alpha=0.3, # Trying to reduce bridges
-                beta=0.7, # trying to reduce background  
+                alpha=0.2, # Trying to reduce bridges
+                beta=0.8, # trying to reduce background  
                 batch=True
             ),
             'Focal': FocalLoss(
@@ -207,6 +209,10 @@ class main_train_STU_Net(BaseTrainer):
                 iter_=3, 
                 smooth=1, 
                 exclude_background=False
+            ),
+            'BCESoftDiceclDiceLoss': BCESoftDiceclDiceLoss(
+                iter_= 3, 
+                smooth=1.0
             ),
             'AntiBridge': AntiBridgeLoss( # not use in Deep Supervision
                 sigma=1.0, # Don't used if the edge map exists
@@ -277,12 +283,15 @@ class main_train_STU_Net(BaseTrainer):
                     if len(pred) > 1:
                         losses_dict[f"{crit}_fullres"] = loss_value.item() * w
 
+
                 # NO DEEP SUPERVISON FOR THESE LOSSES
                 elif crit=='CLDICE':
                     # apply activation befofre masking to ensure 0 in the region to ignore
                     pred_masked = sigmoid(pred[-1]) * roi_mask[-1]
                     target_masked = target[-1] * roi_mask[-1]
                     loss_here = loss_fn(pred_masked, target_masked)
+                elif crit=='BCESoftDiceclDiceLoss':
+                    loss_here = loss_fn(y_true=target[-1], y_pred=pred[-1], roi_mask=roi_mask[-1], weights=self.config['BCESoftDiceclDiceLoss_weights'])
                 elif crit=='AntiBridge':
                     loss_here = loss_fn(pred[-1], target[-1], roi_mask[-1], bridge_weight_map)
 
@@ -340,7 +349,31 @@ class main_train_STU_Net(BaseTrainer):
         """Define learning rate scheduler."""
         # If resuming, last_epoch should be start_epoch - 1
         last_epoch = self.config.get('resume_epoch', 0) - 1 if self.config.get('resume') else -1
-        return CosineAnnealingLR(self.optimizer, self.config['num_epochs'], eta_min=0.0, last_epoch=last_epoch)
+
+        if self.config['lr_scheduler']=="CosineAnnealingLR":
+            return CosineAnnealingLR(self.optimizer, self.config['num_epochs'], eta_min=0.0, last_epoch=last_epoch)
+        
+        elif self.config['lr_scheduler']=="CosineAnnealingLR_Up":
+            # LR starts at config['min_lr'] and rises to config['learning_rate_up']
+            target_lr = self.config['learning_rate_up']
+            base_lr = self.config['learning_rate'] # You'll need to define a starting point
+            
+            # Cosine increase formula
+            lr_lambda = lambda epoch: (
+                (1 - math.cos(math.pi * epoch / self.config['num_epochs'])) / 2 * (target_lr / base_lr - 1) + 1
+            )
+            
+            return LambdaLR(self.optimizer, lr_lambda=lr_lambda, last_epoch=last_epoch)
+        
+        elif self.config['lr_scheduler']=="Fixed":
+            # LambdaLR applies: new_lr = base_lr * lambda(last_epoch)
+            # Returning 1.0 ensures the LR never changes.
+            return LambdaLR(self.optimizer, lr_lambda=lambda epoch: 1.0, last_epoch=last_epoch)
+        
+        else:
+            raise ValueError(f"Unknown lr_scheduler type: {self.config['lr_scheduler']}. "
+                             f"Expected 'CosineAnnealingLR' or 'fixed'.")
+
     
     def _get_transforms(self):
         """
@@ -1014,7 +1047,7 @@ class main_train_STU_Net(BaseTrainer):
         for param in self.model.parameters():
             param.requires_grad = True
 
-        for self.epoch in range(self.start_epoch, self.config['num_epochs'] + 1):
+        for self.epoch in range(self.start_epoch, self.config['num_epochs']):
             # Train one epoch
             train_avg_loss, per_criterio_loss = self.train_epoch(
                 epoch=self.epoch,
