@@ -55,7 +55,7 @@ from stunet_model import STUNetSegmentation # We want to seg now -> Last layer i
 sys.path.append(os.path.abspath("../utils"))
 
 from cldice.cldice import soft_cldice
-from monai_cldice import BCESoftDiceclDiceLoss
+from cldice.monai_cldice import BCESoftDiceclDiceLoss
 from AntiBridgeLoss import AntiBridgeLoss
 from mask_utils import GetROIMaskdd, GetBinaryLabeld
 
