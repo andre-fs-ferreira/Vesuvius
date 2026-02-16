@@ -1,0 +1,40 @@
+{
+  "architecture": "STU-Net",
+  "patch_size": [128, 128, 128],
+  "device": "cuda",
+  "batch_size": 1,
+  "num_workers": 4,
+
+  "infer_sw_batch_size": 2,
+  "blend_mode": "gaussian",
+  "deep_supervision": false,
+  "activation": true,
+
+  "overlap_list": [0.5],
+  "TTA_list": [true],
+  "TH_list": [0.5],
+
+  "checkpoint_paths": [
+    "/home/shadowtwin/Desktop/AI_work/Vesuvius_Challenge/Vesuvius/checkpoints/second_step/BCE_Tversky_DAsafe/model_best.pth"  
+  ],
+  "dataset_path_imgs": "/home/shadowtwin/Desktop/AI_work/Vesuvius_Challenge/Vesuvius/DataSet/val_images",
+  "dataset_path_gt": "/home/shadowtwin/Desktop/AI_work/Vesuvius_Challenge/Vesuvius/DataSet/val_labels",
+  "root_pred_save_dir": "/home/shadowtwin/Desktop/AI_work/Vesuvius_Challenge/Vesuvius/inferences_postprocess/",
+
+  "post_process": true,
+  "post_process_kaggle": false,
+
+  "post_process_crop_margin": 5,
+
+  "simple_TH": false,
+  "hysteresis_TH_propragation": true,
+  "hysteresis_TH_threshold": false,
+
+  "post_process_hysteresis_low_th": 0.45,
+  "post_process_hysteresis_high_th": 0.75,
+  "post_process_min_size": 1000,
+  "post_process_connectivity": 3,
+  "post_process_solidify_iterations": 1,
+  "post_process_kaggle_z_radius": 4,
+  "post_process_kaggle_xy_radius": 2
+}
