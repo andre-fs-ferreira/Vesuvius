@@ -34,7 +34,7 @@
   "post_process_hysteresis_high_th": 0.75,
   "post_process_min_size": 1000,
   "post_process_connectivity": 3,
-  "post_process_solidify_iterations": 1,
-  "post_process_kaggle_z_radius": 4,
-  "post_process_kaggle_xy_radius": 2
+  "post_process_solidify_iterations": 2,
+  "post_process_kaggle_z_radius": 2,
+  "post_process_kaggle_xy_radius": 0
 }

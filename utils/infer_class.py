@@ -276,6 +276,8 @@ class VesuviusInferer(BaseInfer):
 
         # save dataframe to csv (take name from the path_dir last folder)
         csv_name = os.path.basename(os.path.normpath(path_dir)) + '_df.csv'
+        print(f"path_dir: {path_dir}")
+        print(f"csv_name: {csv_name}")
         result_df.to_csv(os.path.join(path_dir, csv_name), index=False)
         return result_df
 
@@ -357,24 +359,46 @@ class VesuviusInferer(BaseInfer):
             # Check if ANY of those paths do NOT exist
             if any(not os.path.isfile(p) for p in paths_to_check):
                 # Your code to generate/save predictions goes here
-                print("At least one threshold file is missing. Running code...")
+                
+                if self.config.get("post_process", False):
+                    if self.config['simple_TH']:
+                        add_name = "simple_TH"
+                    elif self.config['hysteresis_TH_propragation']:
+                        add_name = "hysteresis_TH_propragation"
+                    elif self.config['hysteresis_TH_threshold']:
+                        add_name = "hysteresis_TH_threshold"
+                    else:
+                        add_name = "no_TH"
+                    dir_path = os.path.join(str(pred_save_dir), f"post_process_{add_name}_{self.config['post_process_hysteresis_low_th']}_{self.config['post_process_hysteresis_high_th']}_iters{self.config['post_process_solidify_iterations']}")
+                    os.makedirs(dir_path, exist_ok=True)
+                    save_path = os.path.join(dir_path, f"{file_name}.tif")
+                    
+                elif self.config.get("post_process_kaggle", False):
+                    dir_path = os.path.join(str(pred_save_dir), f"post_process_kaggle_{self.config['post_process_hysteresis_low_th']}_{self.config['post_process_hysteresis_high_th']}")
+                    os.makedirs(dir_path, exist_ok=True)
+                    save_path = os.path.join(dir_path, f"{file_name}.tif")
+                
+                print(f"Creating {save_path}")
+                if os.path.isfile(save_path):
+                    print(f"Case already done: {save_path}")
+                    continue
+                    
                 logits_pred, all_preds = self.infer(input_data, test=True, threshold_list=self.config["TH_list"])
+
                 if self.config.get("post_process", False):
                     # Post processing!
                     pred = self.post_processor._run_mine(logits_pred)
-                    os.makedirs(os.path.join(str(pred_save_dir), f"post_process"), exist_ok=True)
                     self.save_tiff(
                             torch_tensor=pred, 
-                            save_path=os.path.join(str(pred_save_dir), f"post_process", f"{file_name}.tif"),
+                            save_path=save_path,
                             transpose=False
                         )
                 elif self.config.get("post_process_kaggle", False):
                     # Post processing!
                     pred = self.post_processor._run_kaggle_postprocess(logits_pred)
-                    os.makedirs(os.path.join(str(pred_save_dir), f"post_process_kaggle"), exist_ok=True)
                     self.save_tiff(
                             torch_tensor=pred, 
-                            save_path=os.path.join(str(pred_save_dir), f"post_process_kaggle", f"{file_name}.tif"),
+                            save_path=save_path,
                             transpose=False
                         )
                 else:
@@ -392,6 +416,13 @@ class VesuviusInferer(BaseInfer):
 
         # 📊 Creating the dataframe for testing
         print("\n📝 Generating submission dataframes...")
-        for th in self.config["TH_list"]:
-            self.create_dfs(os.path.join(str(pred_save_dir), f"th_{str(th)}"))
+        if self.config.get("post_process", False) or self.config.get("post_process_kaggle", False):
+            print(f"Creating data frame in {dir_path}")
+            self.create_dfs(dir_path)
+        else:
+            for th in self.config["TH_list"]:
+                dir_path = os.path.join(str(pred_save_dir), f"th_{str(th)}")
+                print(f"Creating data frame in {dir_path}")
+                self.create_dfs(dir_path)
         print(f"✅ Inference completed. Predictions saved to: {pred_save_dir}")
+        return dir_path

@@ -73,25 +73,28 @@ for tta in tta_list:
 
                 print("=" * 50)
                 # 🏃 Run Inference
-                infer_object.dataset_inference(
+                dir_path = infer_object.dataset_inference(
                     dataset_path = config_content["dataset_path_imgs"], 
                     pred_save_dir = config_content["pred_save_dir"],
                 )
                 print("=" * 50)
 
                 for th in th_list:
-                    csv_name = f"th_{str(th)}/{model_name_str}_epoch_{epoch}_{tta_str}_overlap_{overlap}_th_{th}.csv"
-                    print(f"Doing: {config_content['pred_save_dir']}/{csv_name}")
-                    if os.path.exists(f"{config_content['pred_save_dir']}/{csv_name}"):
-                        print(f"Already evaluated: {config_content['pred_save_dir']}/{csv_name}")
+                    csv_name = f"{model_name_str}_epoch_{epoch}_{tta_str}_overlap_{overlap}_th_{th}.csv"
+                    output_file = f"{dir_path}/{csv_name}"
+                    print(f"Doing: {output_file}")
+                    
+                    if os.path.exists(output_file):
+                        print(f"Already evaluated: {output_file}")
                         continue
+
                     # 📊 Evaluation Phase
                     print("🧐 Starting evaluation using VesuviusMetric...")
                     print(os.path.join(config_content['pred_save_dir'], f"th_{th}/th_{th}_df.csv"))
                     test_metric_obj = VesuviusMetric(
                         solution_path=f"{os.path.join(config_content['dataset_path_gt'], os.path.basename(os.path.normpath(config_content['dataset_path_gt'])) + '_df.csv')}",
-                        submission_path = os.path.join(config_content['pred_save_dir'], f"th_{th}/th_{th}_df.csv"),
-                        output_file=f"{config_content['pred_save_dir']}/{csv_name}"
+                        submission_path=os.path.join(dir_path, os.path.basename(os.path.normpath(dir_path)) + '_df.csv'),
+                        output_file=output_file
                     )
 
                     test_metric_obj._run()

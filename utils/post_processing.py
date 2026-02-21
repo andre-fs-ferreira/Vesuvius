@@ -6,6 +6,7 @@ from scipy import ndimage as ndi
 from skimage.measure import label
 from torch.nn.functional import sigmoid
 from skimage.filters import apply_hysteresis_threshold
+from skimage.morphology import remove_small_objects
 
 class VesuviusPostProcessing():
     def __init__(self, config):
@@ -168,7 +169,7 @@ class VesuviusPostProcessing():
 
         # Step 3: Dust Removal
         if dust_min_size > 0:
-            mask = self.remove_small_objects(
+            mask = remove_small_objects(
                 mask.astype(bool), min_size=dust_min_size
             )
 
