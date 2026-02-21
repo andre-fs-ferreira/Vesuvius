@@ -55,7 +55,7 @@ from stunet_model import STUNetSegmentation # We want to seg now -> Last layer i
 sys.path.append(os.path.abspath("../utils"))
 
 from cldice.cldice import soft_cldice
-from monai_cldice import BCESoftDiceclDiceLoss
+from cldice.monai_cldice import BCESoftDiceclDiceLoss
 from AntiBridgeLoss import AntiBridgeLoss
 from mask_utils import GetROIMaskdd, GetBinaryLabeld
 
@@ -683,7 +683,7 @@ class main_train_STU_Net(BaseTrainer):
             print(f"Saved checkpoint: {save_path}")
         
         # Save Checkpoint
-        if epoch % 10 == 0: 
+        if (isinstance(epoch, int) and epoch % 10 == 0) or epoch == 'Final':
             save_path = join(self.model_save_path, f"model_epoch_{epoch}.pth")
             torch.save({
                     'epoch': epoch,
@@ -1092,3 +1092,9 @@ class main_train_STU_Net(BaseTrainer):
 
             # Applying learning rate Cosine Annealing
             self.scheduler.step()
+
+        best_val_value = self.saving_logic(
+            best_val_value=best_val_value, 
+            val_avg_value=val_avg_value, 
+            epoch='Final'
+        )

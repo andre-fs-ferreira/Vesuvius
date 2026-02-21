@@ -8,7 +8,7 @@ import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="zarr.codecs.numcodecs._codecs")
 
 if __name__=="__main__":
-    CONFIG_FILE = "../configs/main_second_step.json"
+    CONFIG_FILE = "../configs/main_third_step_3.3.1_alternative.json"
     with open(CONFIG_FILE, "r") as f:
         second_step_config = json.load(f)
     trainer = main_train_STU_Net(second_step_config)

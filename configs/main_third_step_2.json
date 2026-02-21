@@ -16,7 +16,7 @@
   "device": "cuda",
 
   "save_dir": "../checkpoints/second_step",
-  "checkpoint_path": "/mounts/disk4_tiago_e_andre/vesuvius/Vesuvius/checkpoints/second_step/wandb/run-20260206_093009-gtq7atw3/files/model/model_best.pth",
+  "checkpoint_path": "/mounts/disk4_tiago_e_andre/vesuvius/Vesuvius/checkpoints/second_step/wandb/run-20260206_162059-h3w3ku5o/files/model/model_epoch_Final.pth",
   "vol_data_path": "../DataSet/Challenge_dataset_updated/train_images_nii_crop",
   "label_data_path": "../DataSet/Challenge_dataset_updated/train_labels_nii_crop",
   "bridge_weight_map_path": "../DataSet/Challenge_dataset_updated/train_bridge_weight_map_crop",
