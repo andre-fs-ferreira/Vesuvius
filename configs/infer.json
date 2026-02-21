@@ -15,6 +15,14 @@
   "TH_list": [0.4, 0.5, 0.6],
 
   "checkpoint_paths": [
+    "/home/shadowtwin/Desktop/AI_work/Vesuvius_Challenge/Vesuvius/checkpoints/second_step/CESoftDiceclDiceLoss_step3_1_DAsafe/model_epoch_Final.pth",
+    "/home/shadowtwin/Desktop/AI_work/Vesuvius_Challenge/Vesuvius/checkpoints/second_step/CESoftDiceclDiceLoss_step3_1_DAsafe/model_best.pth",
+    "/home/shadowtwin/Desktop/AI_work/Vesuvius_Challenge/Vesuvius/checkpoints/second_step/CESoftDiceclDiceLoss_step3_DAsafe/model_epoch_Final.pth",
+    "/home/shadowtwin/Desktop/AI_work/Vesuvius_Challenge/Vesuvius/checkpoints/second_step/CESoftDiceclDiceLoss_step2_DAsafe/model_epoch_Final.pth",
+    "/home/shadowtwin/Desktop/AI_work/Vesuvius_Challenge/Vesuvius/checkpoints/second_step/CESoftDiceclDiceLoss_step3_DAsafe/model_best.pth",
+    "/home/shadowtwin/Desktop/AI_work/Vesuvius_Challenge/Vesuvius/checkpoints/second_step/CESoftDiceclDiceLoss_step2_DAsafe/model_best.pth",
+    "/home/shadowtwin/Desktop/AI_work/Vesuvius_Challenge/Vesuvius/checkpoints/second_step/BCE_Tversky_DAsafe/model_epoch_160.pth",
+    "/home/shadowtwin/Desktop/AI_work/Vesuvius_Challenge/Vesuvius/checkpoints/second_step/BCE_Tversky_DAsafe/model_best.pth",
     "/home/shadowtwin/Desktop/AI_work/Vesuvius_Challenge/Vesuvius/checkpoints/second_step/Focal_DSC_CLDICEsafe/model_best.pth",
     "/home/shadowtwin/Desktop/AI_work/Vesuvius_Challenge/Vesuvius/checkpoints/second_step/Focal_DSC_CLDICEsafe/model_epoch_60.pth",
     "/home/shadowtwin/Desktop/AI_work/Vesuvius_Challenge/Vesuvius/checkpoints/second_step/Focal_Tversky_CLDICE_DAsafe/model_epoch_40.pth",

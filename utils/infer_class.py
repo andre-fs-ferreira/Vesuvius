@@ -27,6 +27,7 @@ from monai.transforms import (
 from monai.inferers import SlidingWindowInferer
 
 from mask_utils import GetROIMaskdd, GetBinaryLabeld
+from post_processing import VesuviusPostProcessing
 import tifffile  
 
 import os
@@ -46,6 +47,8 @@ class VesuviusInferer(BaseInfer):
         self.sliding_window = self._set_sliding_window_inferer()
 
         self.axes_combinations = self._define_flip_tta(spatial_dims=(3, 4))
+
+        self.post_processor = VesuviusPostProcessing(self.config)
         
 
     def _build_model(self):
@@ -104,13 +107,17 @@ class VesuviusInferer(BaseInfer):
         # Save the Nifti1Image to disk
         nib.save(pred_nii, save_path)
     
-    def save_tiff(self, torch_tensor, save_path, **kwargs):
+    def save_tiff(self, torch_tensor, save_path, transpose=True, **kwargs):
         """Logic for saving predictions to disk."""
         # Ensure tensor is 3D (H, W, D) or (H, W)
-        data = torch_tensor.detach().cpu().numpy().astype('uint8')
+        try:
+            data = torch_tensor.detach().cpu().numpy().astype('uint8')
+        except:
+            data = torch_tensor.astype('uint8')
         while data.ndim > 3:
             data = np.squeeze(data, axis=0)
-        data = np.transpose(data, (2, 1, 0))
+        if transpose:
+            data = np.transpose(data, (2, 1, 0))
         
         # If the data is a probability map (0-1), 
         # many Vesuvius tools expect uint16 or uint8
@@ -182,7 +189,7 @@ class VesuviusInferer(BaseInfer):
             axes_combinations.extend(itertools.combinations(spatial_dims, i))
         return axes_combinations
             
-    def infer(self, input, test=False, threshold=0.5, **kwargs):
+    def infer(self, input, test=False, threshold_list=[], **kwargs):
         """Logic for inference. Returns predictions."""
         if test:
             data = self.load_input_data(file_dict=input, transforms=self.test_transforms)
@@ -241,20 +248,25 @@ class VesuviusInferer(BaseInfer):
                         logits_pred = self.sliding_window(inputs=input_image, network=self.model)
                         final_pred = sigmoid(logits_pred)
                         all_logits_pred = logits_pred
-        # Binary seg
-        final_pred[final_pred>threshold] = 1.0
-        final_pred[final_pred<=threshold] = 0.0
+        
+        all_preds = []
+        for threshold in threshold_list:
+            # Binary seg
+            final_pred_copy = final_pred.clone()
+            final_pred_copy[final_pred_copy>threshold] = 1.0
+            final_pred_copy[final_pred_copy<=threshold] = 0.0
+            all_preds.append(final_pred_copy)
 
         if test:
             if self.config['activation']:
-                return None, final_pred
+                return final_pred, all_preds
             else:
-                return all_logits_pred, final_pred
+                return all_logits_pred, all_preds
         else:
             if self.config['activation']:
-                return final_pred, data['gt'].unsqueeze(0).to(self.config['device']), data['roi_mask'].unsqueeze(0).to(self.config['device']) 
+                return all_preds, data['gt'].unsqueeze(0).to(self.config['device']), data['roi_mask'].unsqueeze(0).to(self.config['device']) 
             else:
-                return all_logits_pred, final_pred, data['gt'].unsqueeze(0).to(self.config['device']), data['roi_mask'].unsqueeze(0).to(self.config['device']) 
+                return all_logits_pred, all_preds, data['gt'].unsqueeze(0).to(self.config['device']), data['roi_mask'].unsqueeze(0).to(self.config['device']) 
 
     def create_dfs(self, path_dir):
         # Generate DataFrame
@@ -264,6 +276,8 @@ class VesuviusInferer(BaseInfer):
 
         # save dataframe to csv (take name from the path_dir last folder)
         csv_name = os.path.basename(os.path.normpath(path_dir)) + '_df.csv'
+        print(f"path_dir: {path_dir}")
+        print(f"csv_name: {csv_name}")
         result_df.to_csv(os.path.join(path_dir, csv_name), index=False)
         return result_df
 
@@ -317,6 +331,8 @@ class VesuviusInferer(BaseInfer):
         """ inference on all cases in a dataset directory and save predictions """
         os.makedirs(pred_save_dir, exist_ok=True)
         all_cases = glob.glob(os.path.join(dataset_path, '**/*.tif'), recursive=True)
+
+        
         
         # 🏁 Wrap the list in tqdm for a visual progress bar
         # 'desc' adds a label to the bar, 'unit' labels each iteration
@@ -332,19 +348,81 @@ class VesuviusInferer(BaseInfer):
 
             # 💾 Robust filename extraction
             file_name = os.path.basename(case).replace('.tif', '')
-            save_path = os.path.join(pred_save_dir, f"{file_name}.tif")
-            if os.path.isfile(save_path):
-                print(f"Case already predicted: {save_path}")
-            else:
-                # Inference
-                logits_pred, pred = self.infer(input_data, test=True, threshold=self.config["TH"])
+
             
-                self.save_tiff(
-                    torch_tensor=pred, 
-                    save_path=save_path
-                )
+            # Create a list of all potential file paths
+            paths_to_check = [
+                os.path.join(str(pred_save_dir), f"th_{str(th)}", f"{file_name}.tif") 
+                for th in self.config["TH_list"]
+            ]
+      
+            # Check if ANY of those paths do NOT exist
+            if any(not os.path.isfile(p) for p in paths_to_check):
+                # Your code to generate/save predictions goes here
+                
+                if self.config.get("post_process", False):
+                    if self.config['simple_TH']:
+                        add_name = "simple_TH"
+                    elif self.config['hysteresis_TH_propragation']:
+                        add_name = "hysteresis_TH_propragation"
+                    elif self.config['hysteresis_TH_threshold']:
+                        add_name = "hysteresis_TH_threshold"
+                    else:
+                        add_name = "no_TH"
+                    dir_path = os.path.join(str(pred_save_dir), f"post_process_{add_name}_{self.config['post_process_hysteresis_low_th']}_{self.config['post_process_hysteresis_high_th']}_iters{self.config['post_process_solidify_iterations']}")
+                    os.makedirs(dir_path, exist_ok=True)
+                    save_path = os.path.join(dir_path, f"{file_name}.tif")
+                    
+                elif self.config.get("post_process_kaggle", False):
+                    dir_path = os.path.join(str(pred_save_dir), f"post_process_kaggle_{self.config['post_process_hysteresis_low_th']}_{self.config['post_process_hysteresis_high_th']}")
+                    os.makedirs(dir_path, exist_ok=True)
+                    save_path = os.path.join(dir_path, f"{file_name}.tif")
+                
+                print(f"Creating {save_path}")
+                if os.path.isfile(save_path):
+                    print(f"Case already done: {save_path}")
+                    continue
+                    
+                logits_pred, all_preds = self.infer(input_data, test=True, threshold_list=self.config["TH_list"])
+
+                if self.config.get("post_process", False):
+                    # Post processing!
+                    pred = self.post_processor._run_mine(logits_pred)
+                    self.save_tiff(
+                            torch_tensor=pred, 
+                            save_path=save_path,
+                            transpose=False
+                        )
+                elif self.config.get("post_process_kaggle", False):
+                    # Post processing!
+                    pred = self.post_processor._run_kaggle_postprocess(logits_pred)
+                    self.save_tiff(
+                            torch_tensor=pred, 
+                            save_path=save_path,
+                            transpose=False
+                        )
+                else:
+                    for th_idx, pred in enumerate(all_preds):
+                        os.makedirs(os.path.join(str(pred_save_dir), f"th_{str(self.config['TH_list'][th_idx])}"), exist_ok=True)
+                        
+                        
+                        self.save_tiff(
+                            torch_tensor=pred, 
+                            save_path=os.path.join(str(pred_save_dir), f"th_{str(self.config['TH_list'][th_idx])}", f"{file_name}.tif")
+                        )
+            else:
+                print(f"Case already predicted: {paths_to_check}")
+            
 
         # 📊 Creating the dataframe for testing
         print("\n📝 Generating submission dataframes...")
-        self.create_dfs(pred_save_dir)
+        if self.config.get("post_process", False) or self.config.get("post_process_kaggle", False):
+            print(f"Creating data frame in {dir_path}")
+            self.create_dfs(dir_path)
+        else:
+            for th in self.config["TH_list"]:
+                dir_path = os.path.join(str(pred_save_dir), f"th_{str(th)}")
+                print(f"Creating data frame in {dir_path}")
+                self.create_dfs(dir_path)
         print(f"✅ Inference completed. Predictions saved to: {pred_save_dir}")
+        return dir_path

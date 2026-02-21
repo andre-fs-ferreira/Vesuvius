@@ -7,7 +7,7 @@ import os
 import json
 
 # 🔧 Configuration Loading
-CONFIG_FILE = '../configs/infer.json'
+CONFIG_FILE = '../configs/infer_post.json'
 
 if not os.path.exists(CONFIG_FILE):
     print(f"❌ Error: Configuration file {CONFIG_FILE} not found!")
@@ -48,12 +48,22 @@ for tta in tta_list:
     
         for overlap in overlap_list:
             config_content['infer_overlap'] = overlap # overlap between windows
-            for th in th_list:
-                config_content['TH'] = th # threshold of prob to become 1 in segmentation
-                config_content["pred_save_dir"] = os.path.join(config_content["root_pred_save_dir"], f"{model_name_str}_epoch_{epoch}", str(tta_str), f"overlap_{overlap}", f"th_{th}")
-                csv_name = f"{model_name_str}_epoch_{epoch}_{tta_str}_overlap_{overlap}_th_{th}.csv"
-
+            #for th in th_list:
+            #config_content['TH'] = th # threshold of prob to become 1 in segmentation
+            config_content["pred_save_dir"] = os.path.join(config_content["root_pred_save_dir"], f"{model_name_str}_epoch_{epoch}", str(tta_str), f"overlap_{overlap}")
+          
+            paths_to_check = [
+                os.path.join(
+                    config_content["pred_save_dir"], 
+                    f"th_{th}", 
+                    f"{model_name_str}_epoch_{epoch}_{tta_str}_overlap_{overlap}_th_{th}.csv"
+                ) 
+                for th in th_list
+            ]
+            if any(not os.path.isfile(p) for p in paths_to_check):
                 print(f"🚀 Starting inference on dataset: {config_content['dataset_path_imgs']}")
+                
+            
                 print("📋 Using the following configuration:")
                 for key, value in config_content.items():
                     print(f"  🔹 {key}: {value}")
@@ -63,22 +73,29 @@ for tta in tta_list:
 
                 print("=" * 50)
                 # 🏃 Run Inference
-                infer_object.dataset_inference(
+                dir_path = infer_object.dataset_inference(
                     dataset_path = config_content["dataset_path_imgs"], 
-                    pred_save_dir = config_content["pred_save_dir"]
+                    pred_save_dir = config_content["pred_save_dir"],
                 )
                 print("=" * 50)
 
-                # 📊 Evaluation Phase
-                print("🧐 Starting evaluation using VesuviusMetric...")
-                if os.path.exists(f"{config_content['pred_save_dir']}/{csv_name}"):
-                    pass
-                else:
+                for th in th_list:
+                    csv_name = f"{model_name_str}_epoch_{epoch}_{tta_str}_overlap_{overlap}_th_{th}.csv"
+                    output_file = f"{dir_path}/{csv_name}"
+                    print(f"Doing: {output_file}")
+                    
+                    if os.path.exists(output_file):
+                        print(f"Already evaluated: {output_file}")
+                        continue
+
+                    # 📊 Evaluation Phase
+                    print("🧐 Starting evaluation using VesuviusMetric...")
+                    print(os.path.join(config_content['pred_save_dir'], f"th_{th}/th_{th}_df.csv"))
                     test_metric_obj = VesuviusMetric(
                         solution_path=f"{os.path.join(config_content['dataset_path_gt'], os.path.basename(os.path.normpath(config_content['dataset_path_gt'])) + '_df.csv')}",
-                        submission_path=f"{os.path.join(config_content['pred_save_dir'], os.path.basename(os.path.normpath(config_content['pred_save_dir'])) + '_df.csv')}",
-                        output_file=f"{config_content['pred_save_dir']}/{csv_name}"
+                        submission_path=os.path.join(dir_path, os.path.basename(os.path.normpath(dir_path)) + '_df.csv'),
+                        output_file=output_file
                     )
 
                     test_metric_obj._run()
-                print("🎉 Evaluation completed. Results saved! 🏆")
+            print("🎉 Evaluation completed. Results saved! 🏆")

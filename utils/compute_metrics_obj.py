@@ -49,6 +49,14 @@ class VesuviusMetric():
         surface_dice_weight=0.35,
         voi_weight=0.35,
         ):
+
+        print(f"gt_path: {gt_path}")
+        print(f"pred_path: {pred_path}")
+        if pred_path.split('/')[0]!=gt_path.split('/')[0]:
+            raise ValueError(
+                f"Ground Truth: {gt_path}\n"
+                f"Submission:   {pred_path}"
+            )
         gt: np.ndarray = self.load_volume(gt_path)
         pr: np.ndarray = self.load_volume(pred_path)
 
