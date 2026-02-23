@@ -16,3 +16,4 @@ inferences/*
 **.ipynb_checkpoints**
 inferences_postprocess/**
 notebooks/13_Post_process**
+csv_results/**
