@@ -374,7 +374,6 @@ class main_train_STU_Net(BaseTrainer):
             raise ValueError(f"Unknown lr_scheduler type: {self.config['lr_scheduler']}. "
                              f"Expected 'CosineAnnealingLR' or 'fixed'.")
 
-    
     def _get_transforms(self):
         """
         Composes a list of MONAI-based stochastic data augmentations for 3D medical imaging.
@@ -499,6 +498,10 @@ class main_train_STU_Net(BaseTrainer):
             split = json.load(f)
 
         train_cases = split["train"]
+        if self.config['all_data']:
+            print(f"🤘 Using all data 🤘")
+            train_cases += split["val"]
+
         for train_case in train_cases:
             complete_data_dict = {}
             complete_data_dict["image"] = join(self.config['vol_data_path'], train_case)

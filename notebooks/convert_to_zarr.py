@@ -63,7 +63,7 @@ def resume_conversion_safe():
                 print(f"Skipping {fname} (Index {idx} is outside volume size)")
                 continue
 
-            # B. Read & Normalize (Same logic as your previous script)
+            # B. Read & Normalize 
             img = tifffile.imread(fname)
             img = img.astype(np.float32)
             img = (img / 65535.0) * 255.0
@@ -75,7 +75,7 @@ def resume_conversion_safe():
 
             # D. Write Buffer if Full
             if len(buffer_imgs) >= BATCH_SIZE:
-                # Check if indices are contiguous (e.g., 100, 101, 102)
+                # Check if indices are contiguous
                 is_contiguous = (
                     buffer_indices[-1] - buffer_indices[0] + 1 == len(buffer_indices)
                 )
