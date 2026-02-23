@@ -2,7 +2,7 @@
 
 ## Downloading the data for pre-training:
   * Use the notebook in `notebooks/5_Download_tif_files.ipynb` to download the data. Two approaches are in there. Second one recommended.
-  * We downloaded every case, one by one, removed the background and converted to uint8 to save space.
+  * We downloaded every case, one by one, removed the background (using a made by hand foreground mask) and converted to uint8 to save space.
   * We ended up having around 1200 GB of training data.
   * Note: a large disk is necessary for this. I have all data pre-processed in a google drive. I can share this volumes.
 
