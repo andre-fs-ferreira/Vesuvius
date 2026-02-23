@@ -42,7 +42,8 @@ This project is a solution for [Vesuvius Challenge - Surface Detection](https://
   * TTA only in the x and y axis (4 inferences per case)
   * Patch size of 128x128x128
   * Post-processing: th_low=0.45 | th_high=0.75 with smaller than 1000 voxels structures removed and binary dilation + binary erosion 1 iteration each.
-  * Use the python script `src/infer_n_test.py` for inference and testing using the platform metrics (I installed from here https://www.kaggle.com/code/sohier/vesuvius-2025-metric-demo/input). 
+  * Use the python script `src/infer_n_test.py` for inference and testing using the platform metrics (I installed from here https://www.kaggle.com/code/sohier/vesuvius-2025-metric-demo/input). The inference configurations without any post-processing is available in `configs/infer.json`.
+  * Post processing script is available in `utils/post_processing.py` and used by the infer script. The post processing can also be changed in the `configs/infer_post.json`.
 
 ## Results:
   * Before fine-tuning:
