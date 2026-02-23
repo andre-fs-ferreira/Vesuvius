@@ -1,4 +1,6 @@
 # Experiments for the Vesuvius Challenge
+This project is a solution for [Vesuvius Challenge - Surface Detection](https://www.kaggle.com/competitions/vesuvius-challenge-surface-detection/overview).
+[![License: CC BY-NC 4.0](https://img.shields.io/badge/License-CC%20BY--NC%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by-nc/4.0/)
 
 ## Downloading the data for pre-training:
   * Use the notebook in `notebooks/5_Download_tif_files.ipynb` to download the data. Two approaches are in there. Second one recommended.
