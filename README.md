@@ -19,6 +19,7 @@
   * For the challenge, and to mimic the nnUNet we first:
     * Added deep supervision to the network.
   * The training was divided in several steps in order to curate the predictions:
+    * The .tif files are converted to nii.gz for faster processing using the MONAI library, using the notebook `1_DataConversion.ipynb`
     * Label 2 was ignored in loss computation.
     * First we used BCE and DSC (100 epochs to stabilize with phased warmup, unfreezing layer by layer from the output to the input. Aggressive data augmentation).
     * Then Focal and Tversky (200 epochs, aggressive data augmentation).
