@@ -7,6 +7,12 @@ from skimage.measure import label
 from torch.nn.functional import sigmoid
 from skimage.filters import apply_hysteresis_threshold
 from skimage.morphology import remove_small_objects
+import numpy as np
+import torch
+import torch.nn.functional as F
+import cc3d
+from scipy import ndimage as ndi
+from skimage.feature import hessian_matrix, hessian_matrix_eigvals
 
 class VesuviusPostProcessing():
     def __init__(self, config):
@@ -83,6 +89,51 @@ class VesuviusPostProcessing():
             
         return self.unpad_volume(solid_labels, pad_w)
     
+    def instance_split_voi(self, probs, base_labels, max_iters=25):
+        """
+        Multi-thresholding to separate "stuck" layers.
+        Iteratively increases thresholds for large components to split mergers .
+        Maximizes the VOI (Variation of Information) score.
+        """
+        final_instances = np.zeros_like(base_labels)
+        current_max_label = 0
+        
+        stats = cc3d.statistics(base_labels)
+        voxel_counts = stats['voxel_counts']
+        
+        # Identify components that are likely "mergers" (unusually large)
+        mean_size = np.mean(voxel_counts[1:]) if len(voxel_counts) > 1 else 0
+        
+        for label_id in range(1, len(voxel_counts)):
+            component_mask = (base_labels == label_id)
+            
+            # If component is suspiciously large, attempt a split
+            if voxel_counts[label_id] > mean_size * 2:
+                print(f"Found bridges")
+                component_probs = probs * component_mask
+                best_split_labels = component_mask
+                
+                # Search for a higher threshold that causes a split
+                for step in range(1, max_iters + 1):
+                    thresh = self.config['post_process_hysteresis_low_th'] + (step * 0.01)
+                    sub_binary = (component_probs > thresh).astype(np.uint8)
+                    sub_labels = cc3d.connected_components(sub_binary, connectivity=26)
+                    
+                    if np.max(sub_labels) > 1: # A split occurred
+                        best_split_labels = sub_labels
+                        break
+                
+                # Map back to global labels
+                split_mask = (best_split_labels > 0)
+                final_instances[split_mask] = best_split_labels[split_mask] + current_max_label
+                current_max_label = np.max(final_instances)
+            else:
+                final_instances[component_mask] = current_max_label + 1
+                current_max_label += 1
+                
+        return final_instances
+
+
     def _run_mine(self, prob_pred):
     
         # 2. Probability Prep
@@ -103,6 +154,13 @@ class VesuviusPostProcessing():
             raise ValueError("Invalid post-processing thresholding method specified in config. Only available simple_TH and hysteresis_TH.")
         
         grown_seeds = self.clean_and_split_seeds(grown_seeds, min_size=self.config['post_process_min_size'])
+        
+        if self.config['post_process_instance_split']:
+            grown_seeds = self.instance_split_voi(
+                prob_pred, 
+                grown_seeds
+            )
+        
         grown_seeds = self.solidify_sheets_by_label_force(grown_seeds, connectivity=self.config['post_process_connectivity'], iterations=self.config['post_process_solidify_iterations'])
         grown_seeds = self.clean_and_split_seeds(grown_seeds, min_size=self.config['post_process_min_size'])
 
@@ -145,7 +203,7 @@ class VesuviusPostProcessing():
         z_radius=3,
         xy_radius=1,
         dust_min_size=100,
-    ):
+        ):
         # Step 1: 3D Hysteresis
         strong = probs >= T_high
         weak   = probs >= T_low
@@ -176,7 +234,7 @@ class VesuviusPostProcessing():
         return mask.astype(np.uint8)
 
     def _run_kaggle_postprocess(self, prob_pred):
-        prob_pred = np.transpose(prob_pred.squeeze().cpu().numpy(), (2, 1, 0))
+        # It seems that it is expected the output of the model to be in (Z, Y, X)
         grown_seeds = self.topo_postprocess(
             probs=prob_pred,
             T_low=self.config['post_process_hysteresis_low_th'],
@@ -185,4 +243,65 @@ class VesuviusPostProcessing():
             xy_radius=self.config['post_process_kaggle_xy_radius'],
             dust_min_size=self.config['post_process_min_size'],
         )
+        # Converting back to the original order
+        grown_seeds = np.transpose(grown_seeds.squeeze().cpu().numpy(), (2, 1, 0))
         return grown_seeds.astype(np.uint16)
+    
+    def topology_repair(self, binary_mask, min_size=200):
+        """
+        Dusting (Noise Removal) and Morphological Closing (Hole Filling).
+        Directly addresses Betti-0 and Betti-1 errors in TopoScore.[2, 3]
+        """
+        # 1. Remove small noise (Betti-0 fix)
+        cleaned = cc3d.dust(binary_mask, threshold=min_size, connectivity=26)
+        
+        # 2. Fill small internal holes (Betti-1/Betti-2 fix)
+        # Using 26-connectivity structure is essential 
+        struct = ndi.generate_binary_structure(3, 3) 
+        repaired = ndi.binary_closing(cleaned, structure=struct, iterations=1)
+        
+        return repaired
+
+    def apply_surfaceness_filter(self, probs, sigma=1.0, confidence_thresh=0.70):
+        """
+        Refined: Masking low-confidence regions before Hessian analysis .
+        """
+        # 1. Zero out low-confidence voxels to prevent noise amplification
+        masked_probs = np.where(probs > confidence_thresh, probs, 0)
+        
+        # 2. Compute 3D Hessian eigenvalues
+        H = hessian_matrix(masked_probs, sigma=sigma, order='rc')
+        eigs = hessian_matrix_eigvals(H)
+        l1, l2, l3 = eigs, eigs[1], eigs[2] # Corrected indexing order
+        
+        # 3. Plate-like enhancement
+        Ra = np.abs(l2) / (np.abs(l3) + 1e-5)
+        S = np.sqrt(l1**2 + l2**2 + l3**2)
+        
+        beta, gamma = 0.5, 15.0
+        enhanced = (1 - np.exp(-(Ra**2) / (2 * beta**2))) * (1 - np.exp(-S**2 / (2 * gamma**2)))
+        
+        return enhanced * (l3 < 0)
+
+    def _run_curated_post_process(self, prob_pred, threshold):
+        """
+        The full sequence recommended for the Vesuvius Surface Detection competition.
+        """
+        prob_pred = np.transpose(prob_pred.squeeze().cpu().numpy(), (2, 1, 0))
+
+        print("Step 1: Enhancing Surfaceness...")
+        enhanced_probs = self.apply_surfaceness_filter(prob_pred)
+        
+        print(f"Step 2: Binarizing at threshold {threshold}...")
+        binary = (enhanced_probs > threshold).astype(np.uint8)
+        
+        print("Step 3: Repairing Topology (Dusting & Closing)...")
+        repaired_binary = self.topology_repair(binary)
+        
+        print("Step 4: Initial Connected Component Analysis...")
+        base_labels = cc3d.connected_components(repaired_binary, connectivity=26)
+        
+        print("Step 5: Refining Instances (VOI Splitting)...")
+        final_labels = self.instance_split_voi(prob_pred, base_labels)
+        
+        return final_labels

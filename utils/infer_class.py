@@ -47,6 +47,7 @@ class VesuviusInferer(BaseInfer):
         self.sliding_window = self._set_sliding_window_inferer()
 
         self.axes_combinations = self._define_flip_tta(spatial_dims=(3, 4))
+        self.rotate_values = [1, 2, 3]  # Corresponding to 90°, 180°, 270° rotations
 
         self.post_processor = VesuviusPostProcessing(self.config)
         
@@ -233,6 +234,35 @@ class VesuviusInferer(BaseInfer):
                 if not self.config['activation']:
                     all_logits_pred.append(logits_pred)
 
+            if self.config["TTA_rotation"]:
+                for rot in self.rotate_values:
+                    print(f"Doing rot: {rot}")
+                    if rot:
+                        # Rotate 90 degrees in the axial plane (H, W)
+                        aug_input = torch.rot90(input_image, k=rot, dims=(3, 4))  # Rotate 90 degrees
+                    else:
+                        aug_input = input_image  # Original image
+
+                    with torch.no_grad():
+                            if self.config['activation']:
+                                prediction = self.sliding_window(inputs=aug_input, network=self.model)
+                            else: # in case sigmoid is not applied in the end of the network (recommended to be True!)
+                                logits_pred = self.sliding_window(inputs=aug_input, network=self.model)
+                                prediction = sigmoid(logits_pred)
+                        
+                    # revert flip
+                    if rot:
+                        pred_prob_aligned = torch.rot90(prediction, k=-rot, dims=(3, 4))  # Rotate back
+                        if not self.config['activation']:
+                            logits_pred = torch.rot90(logits_pred, k=-rot, dims=(3, 4))  # Rotate back
+                    else:
+                        pred_prob_aligned = prediction
+
+                    all_predictions.append(pred_prob_aligned)
+                    if not self.config['activation']:
+                        all_logits_pred.append(logits_pred)
+
+
             final_pred = torch.stack(all_predictions).mean(dim=0)
             if not self.config['activation']:
                 all_logits_pred = torch.stack(all_logits_pred).mean(dim=0)
@@ -369,6 +399,12 @@ class VesuviusInferer(BaseInfer):
                         add_name = "hysteresis_TH_threshold"
                     else:
                         add_name = "no_TH"
+                    
+                    if self.config['post_process_instance_split']:
+                        add_name += "_instance_split"
+
+                    add_name += f"_crop_margin_{self.config['post_process_crop_margin']}"
+                        
                     dir_path = os.path.join(str(pred_save_dir), f"post_process_{add_name}_{self.config['post_process_hysteresis_low_th']}_{self.config['post_process_hysteresis_high_th']}_iters{self.config['post_process_solidify_iterations']}")
                     os.makedirs(dir_path, exist_ok=True)
                     save_path = os.path.join(dir_path, f"{file_name}.tif")
@@ -378,16 +414,21 @@ class VesuviusInferer(BaseInfer):
                     os.makedirs(dir_path, exist_ok=True)
                     save_path = os.path.join(dir_path, f"{file_name}.tif")
                 
+                elif self.config.get("curated_post_process", False):
+                    dir_path = os.path.join(str(pred_save_dir), f"curated_post_process_{self.config['post_process_hysteresis_high_th']}")
+                    os.makedirs(dir_path, exist_ok=True)
+                    save_path = os.path.join(dir_path, f"{file_name}.tif")
+
                 print(f"Creating {save_path}")
                 if os.path.isfile(save_path):
                     print(f"Case already done: {save_path}")
                     continue
                     
-                logits_pred, all_preds = self.infer(input_data, test=True, threshold_list=self.config["TH_list"])
+                probs_pred, all_preds = self.infer(input_data, test=True, threshold_list=self.config["TH_list"])
 
                 if self.config.get("post_process", False):
                     # Post processing!
-                    pred = self.post_processor._run_mine(logits_pred)
+                    pred = self.post_processor._run_mine(probs_pred)
                     self.save_tiff(
                             torch_tensor=pred, 
                             save_path=save_path,
@@ -395,7 +436,15 @@ class VesuviusInferer(BaseInfer):
                         )
                 elif self.config.get("post_process_kaggle", False):
                     # Post processing!
-                    pred = self.post_processor._run_kaggle_postprocess(logits_pred)
+                    pred = self.post_processor._run_kaggle_postprocess(probs_pred)
+                    self.save_tiff(
+                            torch_tensor=pred, 
+                            save_path=save_path,
+                            transpose=False
+                        )
+                elif self.config.get("curated_post_process", False):
+                    # Post processing!
+                    pred = self.post_processor._run_curated_post_process(probs_pred, self.config['post_process_hysteresis_high_th'])
                     self.save_tiff(
                             torch_tensor=pred, 
                             save_path=save_path,

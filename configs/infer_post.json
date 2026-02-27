@@ -12,6 +12,7 @@
 
   "overlap_list": [0.5],
   "TTA_list": [true],
+  "TTA_rotation": false,
   "TH_list": [0.5],
 
   "checkpoint_paths": [
@@ -23,18 +24,21 @@
 
   "post_process": true,
   "post_process_kaggle": false,
+  "curated_post_process":false,
 
-  "post_process_crop_margin": 5,
+  "post_process_crop_margin": 3,
 
   "simple_TH": false,
   "hysteresis_TH_propragation": true,
   "hysteresis_TH_threshold": false,
 
+  "post_process_instance_split": true,
+
   "post_process_hysteresis_low_th": 0.45,
-  "post_process_hysteresis_high_th": 0.80,
+  "post_process_hysteresis_high_th": 0.8,
   "post_process_min_size": 1000,
   "post_process_connectivity": 3,
   "post_process_solidify_iterations": 2,
-  "post_process_kaggle_z_radius": 2,
-  "post_process_kaggle_xy_radius": 0
+  "post_process_kaggle_z_radius": 3,
+  "post_process_kaggle_xy_radius": 2
 }
